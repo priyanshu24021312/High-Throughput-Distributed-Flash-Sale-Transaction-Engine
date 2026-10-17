@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlashDeals - Flash Sale & Ticket Booking System</title>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS (for simple modern layout) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="styles.css">
+    <!-- Confetti on purchase -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+</head>
+<body class="bg-[#FAF8F5] text-stone-900 font-sans min-h-screen flex flex-col">
+
+    <!-- Top Navigation Bar -->
+    <header class="bg-white border-b border-stone-200 sticky top-0 z-40">
+        <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+            
+            <!-- Project Title / Brand -->
+            <div class="flex items-center space-x-3 cursor-pointer" onclick="showCustomerStore()">
+                <div class="w-10 h-10 bg-orange-500 text-white rounded-xl flex items-center justify-center font-bold text-xl shadow-sm">
+                    ⚡
+                </div>
+                <div>
+                    <div class="flex items-center space-x-2">
+                        <span class="font-bold text-lg text-stone-900 tracking-tight">FlashDeals</span>
+                        <span class="bg-orange-100 text-orange-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">B.Tech Project</span>
+                    </div>
+                    <p class="text-xs text-stone-500">Flash Sale Booking System with WAL & WorkerPool</p>
+                </div>
+            </div>
+
+            <!-- Customer Category Filters (Desktop) -->
+            <div id="buyer-nav-pills" class="hidden md:flex items-center space-x-1 bg-stone-100 p-1 rounded-xl border border-stone-200">
+                <button onclick="setCategory('all')" id="pill-all" class="cat-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-orange-600 shadow-sm">
+                    All Items
+                </button>
+                <button onclick="setCategory('travel')" id="pill-travel" class="cat-btn px-3 py-1.5 text-xs font-semibold rounded-lg text-stone-600 hover:text-stone-900">
+                    ✈️ Travel Tickets
+                </button>
+                <button onclick="setCategory('wearables')" id="pill-wearables" class="cat-btn px-3 py-1.5 text-xs font-semibold rounded-lg text-stone-600 hover:text-stone-900">
+                    ⌚ Wearables
+                </button>
+                <button onclick="setCategory('electronics')" id="pill-electronics" class="cat-btn px-3 py-1.5 text-xs font-semibold rounded-lg text-stone-600 hover:text-stone-900">
+                    ⚡ Electronics
+                </button>
+            </div>
+
+            <!-- Right Controls: Status & Admin Portal -->
+            <div class="flex items-center space-x-3">
+                <div class="hidden sm:flex items-center space-x-1.5 text-xs text-stone-500 bg-stone-100 px-3 py-1.5 rounded-full border border-stone-200 font-mono">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                    <span id="backend-status-text">Server Active</span>
+                </div>
+
+                <button onclick="handleAdminButtonClick()" id="btn-admin-header" class="px-3.5 py-1.5 text-xs font-semibold rounded-xl bg-stone-900 hover:bg-stone-800 text-white flex items-center space-x-1.5 transition">
+                    <span>🔒</span>
+                    <span id="btn-admin-label">Admin Login</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Mobile Filter Bar -->
+        <div id="mobile-filter-bar" class="md:hidden flex overflow-x-auto px-4 py-2 border-t border-stone-200 space-x-2 bg-white">
+            <button onclick="setCategory('all')" class="mobile-cat-btn px-3 py-1 text-xs font-semibold rounded-lg bg-orange-600 text-white whitespace-nowrap">All Items</button>
+            <button onclick="setCategory('travel')" class="mobile-cat-btn px-3 py-1 text-xs font-semibold rounded-lg bg-stone-100 text-stone-700 whitespace-nowrap">✈️ Travel</button>
+            <button onclick="setCategory('wearables')" class="mobile-cat-btn px-3 py-1 text-xs font-semibold rounded-lg bg-stone-100 text-stone-700 whitespace-nowrap">⌚ Wearables</button>
+            <button onclick="setCategory('electronics')" class="mobile-cat-btn px-3 py-1 text-xs font-semibold rounded-lg bg-stone-100 text-stone-700 whitespace-nowrap">⚡ Electronics</button>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="max-w-6xl mx-auto px-4 py-8 flex-1 w-full space-y-8">
+
+        <!-- ============================================================ -->
+        <!-- VIEW 1: CUSTOMER STOREFRONT -->
+        <!-- ============================================================ -->
+        <section id="customer-store-section" class="space-y-8">
+            
+            <!-- Hero Banner: Sale Announcement -->
+            <div class="bg-gradient-to-r from-orange-500 to-amber-500 rounded-2xl p-6 sm:p-8 text-white shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div class="space-y-2 max-w-xl">
+                    <span class="inline-block bg-white/20 text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider backdrop-blur-sm">
+                        Flash Sale is Live
+                    </span>
+                    <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight">
+                        Exclusive Travel Tickets & Wearables Drop
+                    </h1>
+                    <p class="text-orange-100 text-sm leading-relaxed">
+                        Limited seats and items available. Once stock reaches 0, no more bookings can be made. Powered by ACID transactions and WorkerPool architecture.
+                    </p>
+                </div>
+
+                <!-- Simple Countdown Timer -->
+                <div class="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-4 text-center min-w-[240px]">
+                    <div class="text-xs font-medium text-orange-100 uppercase tracking-wider mb-1">Deal Ends In</div>
+                    <div class="flex items-center justify-center space-x-2 text-stone-900 font-mono">
+                        <div class="bg-white rounded-lg px-2.5 py-1.5 font-bold text-lg min-w-[42px]"><span id="timer-hours">02</span><span class="block text-[9px] text-stone-400 font-sans">hrs</span></div>
+                        <span class="text-white font-bold text-lg">:</span>
+                        <div class="bg-white rounded-lg px-2.5 py-1.5 font-bold text-lg min-w-[42px]"><span id="timer-mins">18</span><span class="block text-[9px] text-stone-400 font-sans">min</span></div>
+                        <span class="text-white font-bold text-lg">:</span>
+                        <div class="bg-white text-orange-600 rounded-lg px-2.5 py-1.5 font-bold text-lg min-w-[42px]"><span id="timer-secs">45</span><span class="block text-[9px] text-stone-400 font-sans">sec</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Spotlight Featured Item -->
+            <div class="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm">
+                <div class="flex items-center justify-between pb-4 mb-4 border-b border-stone-100">
+                    <span class="text-xs font-bold text-stone-500 uppercase tracking-wider">🔥 Today's Top Deal</span>
+                    <span id="spotlight-stock-badge" class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">In Stock</span>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+                    <!-- Left: Graphic / Icon -->
+                    <div class="md:col-span-4 bg-orange-50/70 rounded-2xl border border-orange-100 p-8 flex flex-col items-center justify-center text-center">
+                        <span id="spotlight-emoji" class="text-7xl mb-3">✈️</span>
+                        <span id="spotlight-category-tag" class="bg-orange-500 text-white text-[11px] font-bold px-3 py-1 rounded-full uppercase">Travel Ticket</span>
+                    </div>
+
+                    <!-- Right: Item Details & Buy Button -->
+                    <div class="md:col-span-8 space-y-4">
+                        <div>
+                            <h2 id="spotlight-title" class="text-xl sm:text-2xl font-bold text-stone-900">
+                                Air India Express: Delhi to Goa Flash Flight
+                            </h2>
+                            <p id="spotlight-desc" class="text-stone-600 text-sm mt-1 leading-relaxed">
+                                Direct flight ticket with 15kg baggage allowance and free seat selection.
+                            </p>
+                        </div>
+
+                        <!-- Price Section in Rupees -->
+                        <div class="flex items-baseline space-x-3 bg-stone-50 p-3.5 rounded-xl border border-stone-200">
+                            <span class="text-xs text-stone-500 font-semibold">Special Price:</span>
+                            <span id="spotlight-price" class="text-2xl sm:text-3xl font-extrabold text-orange-600">₹2,999.00</span>
+                            <span id="spotlight-original-price" class="text-sm text-stone-400 line-through">₹6,999.00</span>
+                            <span id="spotlight-discount-badge" class="bg-orange-600 text-white text-xs font-bold px-2 py-0.5 rounded">-57% OFF</span>
+                        </div>
+
+                        <!-- Stock Progress Bar -->
+                        <div class="space-y-1.5">
+                            <div class="flex justify-between text-xs font-medium text-stone-700">
+                                <span>Seats / Quantity Remaining:</span>
+                                <span><strong id="spotlight-qty-left" class="text-orange-600">25</strong> / <span id="spotlight-qty-total">25</span> Left</span>
+                            </div>
+                            <div class="w-full h-3 bg-stone-100 rounded-full overflow-hidden border border-stone-200">
+                                <div id="spotlight-progress-bar" class="h-full bg-orange-500 rounded-full transition-all duration-300" style="width: 100%;"></div>
+                            </div>
+                        </div>
+
+                        <!-- User Selector & Instant Buy -->
+                        <div class="pt-2 flex flex-col sm:flex-row items-center gap-3">
+                            <div class="w-full sm:w-auto flex-1 flex items-center justify-between bg-stone-100 px-3.5 py-2.5 rounded-xl text-xs text-stone-700 border border-stone-200">
+                                <span>Booking as: <strong id="current-user-name" class="text-stone-900">User #42 (Alex K.)</strong></span>
+                                <button onclick="changeRandomUser()" class="text-orange-600 font-bold hover:underline ml-2">Change</button>
+                            </div>
+
+                            <button id="btn-spotlight-buy" onclick="buySpotlightProduct()" class="w-full sm:w-auto px-6 py-3 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-xl text-sm transition shadow-sm flex items-center justify-center space-x-2">
+                                <span>⚡</span>
+                                <span id="btn-spotlight-text">Book Now</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Product Grid -->
+            <div>
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="font-bold text-lg text-stone-900">All Flash Sale Items</h3>
+                    <span id="items-count-badge" class="text-xs bg-stone-200 text-stone-700 font-medium px-2.5 py-1 rounded-full">7 Items</span>
+                </div>
+
+                <div id="products-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                    <!-- Products will be dynamically inserted here -->
+                </div>
+            </div>
+
+        </section>
+
+        <!-- ============================================================ -->
+        <!-- VIEW 2: SECURE ADMIN PANEL (STUDENT FRIENDLY) -->
+        <!-- ============================================================ -->
+        <section id="admin-panel-section" class="space-y-6 hidden">
+            
+            <!-- Admin Header -->
+            <div class="bg-white border border-stone-200 rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                    <div class="flex items-center space-x-2">
+                        <span class="bg-orange-100 text-orange-700 text-xs font-bold px-2.5 py-0.5 rounded-full">Admin Dashboard</span>
+                        <span class="text-xs text-stone-500">Authorized Session</span>
+                    </div>
+                    <h2 class="text-xl sm:text-2xl font-bold text-stone-900 mt-1">Store Management & Engine Console</h2>
+                    <p class="text-xs text-stone-500">Manage products, view bookings, and inspect WAL & WorkerPool algorithms.</p>
+                </div>
+
+                <div class="flex items-center space-x-2">
+                    <button onclick="openAddModal()" class="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold rounded-xl transition shadow-sm flex items-center space-x-1.5">
+                        <span>➕</span>
+                        <span>Add Product / Ticket</span>
+                    </button>
+                    <button onclick="showCustomerStore()" class="px-3.5 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-semibold rounded-xl border border-stone-200 transition">
+                        ← Customer View
+                    </button>
+                    <button onclick="logoutAdmin()" class="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold rounded-xl border border-rose-200 transition" title="Logout">
+                        Logout
+                    </button>
+                </div>
+            </div>
+
+            <!-- 4 Simple KPI Stats Cards -->
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm">
+                    <span class="text-xs text-stone-500 font-medium">Total Revenue</span>
+                    <div id="stat-revenue" class="text-xl sm:text-2xl font-bold text-orange-600 mt-1">₹0.00</div>
+                    <span class="text-[11px] text-stone-400">Total customer payments</span>
+                </div>
+                <div class="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm">
+                    <span class="text-xs text-stone-500 font-medium">Total Bookings</span>
+                    <div id="stat-orders" class="text-xl sm:text-2xl font-bold text-stone-900 mt-1">0</div>
+                    <span class="text-[11px] text-stone-400">Successful orders</span>
+                </div>
+                <div class="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm">
+                    <span class="text-xs text-stone-500 font-medium">Active Items</span>
+                    <div id="stat-items" class="text-xl sm:text-2xl font-bold text-stone-900 mt-1">0</div>
+                    <span class="text-[11px] text-stone-400">Live products in store</span>
+                </div>
+                <div class="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm">
+                    <span class="text-xs text-stone-500 font-medium">Remaining Stock</span>
+                    <div id="stat-stock" class="text-xl sm:text-2xl font-bold text-emerald-600 mt-1">0 Units</div>
+                    <span class="text-[11px] text-stone-400">Across all catalog items</span>
+                </div>
+            </div>
+
+            <!-- Admin Navigation Tabs -->
+            <div class="flex items-center space-x-2 border-b border-stone-200 pb-2">
+                <button onclick="switchAdminTab('inventory')" id="tab-btn-inventory" class="px-4 py-2 text-xs font-bold rounded-xl bg-orange-600 text-white shadow-sm">
+                    📦 Products & Tickets
+                </button>
+                <button onclick="switchAdminTab('orders')" id="tab-btn-orders" class="px-4 py-2 text-xs font-bold rounded-xl text-stone-600 hover:text-stone-900 hover:bg-stone-100">
+                    📋 Recent Orders Ledger
+                </button>
+                <button onclick="switchAdminTab('algorithms')" id="tab-btn-algorithms" class="px-4 py-2 text-xs font-bold rounded-xl text-stone-600 hover:text-stone-900 hover:bg-stone-100">
+                    ⚙️ Engine Core (WAL & WorkerPool)
+                </button>
+            </div>
+
+            <!-- Admin Tab 1: Products Inventory -->
+            <div id="admin-panel-inventory" class="space-y-4">
+                <div class="bg-white border border-stone-200 rounded-2xl overflow-hidden shadow-sm">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-stone-50 text-stone-600 font-semibold border-b border-stone-200">
+                                <tr>
+                                    <th class="py-3 px-4">Item Name</th>
+                                    <th class="py-3 px-4">Category</th>
+                                    <th class="py-3 px-4">Price (₹)</th>
+                                    <th class="py-3 px-4">Original (₹)</th>
+                                    <th class="py-3 px-4">Stock Left</th>
+                                    <th class="py-3 px-4">Status</th>
+                                    <th class="py-3 px-4 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="admin-products-table" class="divide-y divide-stone-100">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Admin Tab 2: Orders Ledger -->
+            <div id="admin-panel-orders" class="space-y-4 hidden">
+                <div class="flex items-center justify-between">
+                    <input type="text" id="order-search-input" oninput="searchOrders()" placeholder="Search by customer or product..." class="bg-white border border-stone-200 rounded-xl px-3.5 py-2 text-xs w-72 focus:outline-none focus:ring-2 focus:ring-orange-500">
+                    <button onclick="downloadOrdersCSV()" class="px-3.5 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-semibold rounded-xl border border-stone-200 transition">
+                        📥 Download CSV
+                    </button>
+                </div>
+
+                <div class="bg-white border border-stone-200 rounded-2xl overflow-hidden shadow-sm">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-stone-50 text-stone-600 font-semibold border-b border-stone-200">
+                                <tr>
+                                    <th class="py-3 px-4">Order ID</th>
+                                    <th class="py-3 px-4">Customer</th>
+                                    <th class="py-3 px-4">Item Name</th>
+                                    <th class="py-3 px-4">Amount Paid</th>
+                                    <th class="py-3 px-4">Status</th>
+                                    <th class="py-3 px-4 text-right">Time</th>
+                                </tr>
+                            </thead>
+                            <tbody id="admin-orders-table" class="divide-y divide-stone-100">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Admin Tab 3: Concurrency Engine (WAL & WorkerPool) -->
+            <div id="admin-panel-algorithms" class="space-y-6 hidden">
+                
+                <!-- Simple Explanation Card for B.Tech Viva -->
+                <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-900 leading-relaxed">
+                    <strong>💡 How this works in our B.Tech 5th Sem Project:</strong>
+                    <ul class="list-disc list-inside mt-1 space-y-1">
+                        <li><strong>WorkerPool:</strong> Limits concurrent threads to avoid crashing the JVM during traffic spikes (Bounded Task Queue).</li>
+                        <li><strong>WAL (Write-Ahead Log):</strong> Every ticket reservation is written to a sequential disk log (<code class="bg-amber-100 px-1 rounded">data/wal.log</code>) before in-memory stock changes, guaranteeing 0 data loss if server crashes.</li>
+                    </ul>
+                </div>
+
+                <!-- WorkerPool Box -->
+                <div class="bg-white border border-stone-200 rounded-2xl p-5 shadow-sm space-y-4">
+                    <div class="flex items-center justify-between border-b border-stone-100 pb-3">
+                        <div>
+                            <h3 class="font-bold text-sm text-stone-900">🧵 WorkerPool Telemetry</h3>
+                            <p class="text-xs text-stone-500">Dedicated background threads executing ticket bookings safely.</p>
+                        </div>
+                        <span id="worker-count-badge" class="bg-emerald-100 text-emerald-800 text-xs font-semibold px-2.5 py-1 rounded-full">
+                            Workers Online
+                        </span>
+                    </div>
+
+                    <!-- Queue Progress -->
+                    <div class="space-y-1">
+                        <div class="flex justify-between text-xs text-stone-600 font-medium">
+                            <span>Tasks Waiting in Queue:</span>
+                            <span><strong id="worker-queue-size" class="text-orange-600">0</strong> / 2,000 Capacity</span>
+                        </div>
+                        <div class="w-full h-2.5 bg-stone-100 rounded-full overflow-hidden border border-stone-200">
+                            <div id="worker-queue-bar" class="h-full bg-orange-500 rounded-full transition-all" style="width: 0%;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Worker Threads Grid -->
+                    <div>
+                        <span class="text-xs font-semibold text-stone-700 block mb-2">Worker Threads Status:</span>
+                        <div id="worker-cards-grid" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                            <!-- Worker thread badges inserted dynamically -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Write-Ahead Log (WAL) Box -->
+                <div class="bg-white border border-stone-200 rounded-2xl p-5 shadow-sm space-y-4">
+                    <div class="flex items-center justify-between border-b border-stone-100 pb-3">
+                        <div>
+                            <h3 class="font-bold text-sm text-stone-900">📜 Write-Ahead Log (WAL) Console</h3>
+                            <p class="text-xs text-stone-500">Sequential append-only disk log with LSN sequencing.</p>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-xs font-mono bg-stone-100 px-2.5 py-1 rounded-lg text-stone-700 border border-stone-200">
+                                Current LSN: <strong id="wal-lsn-badge">#1000</strong>
+                            </span>
+                            <button onclick="triggerCheckpoint()" class="px-3 py-1 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-lg transition">
+                                Trigger Checkpoint
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Terminal Log Stream -->
+                    <div id="wal-log-terminal" class="bg-stone-900 text-stone-200 rounded-xl p-4 font-mono text-xs max-h-64 overflow-y-auto space-y-1">
+                        <div class="text-stone-500">// WAL log records will appear here...</div>
+                    </div>
+                </div>
+
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-white border-t border-stone-200 py-4 mt-auto">
+        <div class="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between text-xs text-stone-500 gap-2">
+            <span>⚡ FlashDeals — B.Tech 5th Semester Concurrency & DBMS Project</span>
+            <span>Zero-Oversell Guarantee with Mutex, WAL & WorkerPool</span>
+        </div>
+    </footer>
+
+    <!-- ============================================================ -->
+    <!-- MODAL 1: ADMIN PIN LOGIN -->
+    <!-- ============================================================ -->
+    <div id="modal-admin-login" class="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
+        <div class="bg-white border border-stone-200 rounded-2xl p-6 max-w-sm w-full shadow-lg space-y-4 text-center">
+            <div class="w-12 h-12 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center text-xl mx-auto font-bold">
+                🔒
+            </div>
+            <div>
+                <h3 class="font-bold text-lg text-stone-900">Admin Authentication</h3>
+                <p class="text-xs text-stone-500 mt-0.5">Please enter the security PIN to access the store management dashboard.</p>
+            </div>
+            <form onsubmit="verifyAdminPin(event)" class="space-y-3">
+                <input type="password" id="input-pin" placeholder="Enter PIN (Default: admin123)" required class="w-full text-center tracking-widest bg-stone-50 border border-stone-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono">
+                <div class="flex space-x-2">
+                    <button type="button" onclick="closeAdminModal()" class="w-1/2 py-2 text-xs font-semibold text-stone-600 bg-stone-100 hover:bg-stone-200 rounded-xl transition">Cancel</button>
+                    <button type="submit" class="w-1/2 py-2 text-xs font-bold text-white bg-orange-600 hover:bg-orange-700 rounded-xl transition">Login</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- MODAL 2: ADD PRODUCT / TICKET -->
+    <!-- ============================================================ -->
+    <div id="modal-add-item" class="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
+        <div class="bg-white border border-stone-200 rounded-2xl p-6 max-w-md w-full shadow-lg space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-stone-100">
+                <h3 class="font-bold text-base text-stone-900">Add New Product / Ticket</h3>
+                <button onclick="closeAddModal()" class="text-stone-400 hover:text-stone-700 text-lg">✕</button>
+            </div>
+
+            <form onsubmit="handleAddNewItem(event)" class="space-y-3 text-xs">
+                <div>
+                    <label class="font-semibold text-stone-700 block mb-1">Item Category:</label>
+                    <select id="new-item-category" onchange="handleCategoryChange(this.value)" class="w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-stone-900 font-medium focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        <option value="travel">✈️ Travel Ticket (Flight, Train, Concert Pass)</option>
+                        <option value="wearables">⌚ Wearable (Smartwatch, Smart Ring, Fitness Band)</option>
+                        <option value="electronics">⚡ Electronics (Gaming, Smartphone, Audio)</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="font-semibold text-stone-700 block mb-1">Product / Ticket Title:</label>
+                    <input type="text" id="new-item-name" required placeholder="e.g. Goa Flight Ticket or Titan Smartwatch" class="w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-stone-900 focus:outline-none focus:ring-2 focus:ring-orange-500">
+                </div>
+
+                <div>
+                    <label class="font-semibold text-stone-700 block mb-1">Short Description:</label>
+                    <textarea id="new-item-desc" rows="2" placeholder="e.g. Weekend departure with baggage included." class="w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-stone-900 focus:outline-none focus:ring-2 focus:ring-orange-500"></textarea>
+                </div>
+
+                <div class="grid grid-cols-3 gap-2.5">
+                    <div>
+                        <label class="font-semibold text-stone-700 block mb-1">Flash Price (₹):</label>
+                        <input type="number" id="new-item-price" min="1" step="1" value="2999" required class="w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-stone-900 font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono">
+                    </div>
+                    <div>
+                        <label class="font-semibold text-stone-700 block mb-1">Original (₹):</label>
+                        <input type="number" id="new-item-original" min="1" step="1" value="6999" required class="w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-stone-900 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono">
+                    </div>
+                    <div>
+                        <label class="font-semibold text-stone-700 block mb-1">Total Seats/Qty:</label>
+                        <input type="number" id="new-item-qty" min="1" max="5000" value="30" required class="w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-stone-900 font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono">
+                    </div>
+                </div>
+
+                <div class="flex justify-end space-x-2 pt-2 border-t border-stone-100">
+                    <button type="button" onclick="closeAddModal()" class="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold rounded-xl">Cancel</button>
+                    <button type="submit" class="px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-xl shadow-sm">Save & Publish</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- MODAL 3: ORDER RECEIPT TICKET -->
+    <!-- ============================================================ -->
+    <div id="modal-receipt" class="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
+        <div class="bg-white border border-stone-200 rounded-2xl p-6 max-w-sm w-full shadow-lg space-y-4 text-center">
+            <div class="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center text-2xl mx-auto">
+                🎉
+            </div>
+            <div>
+                <h3 class="font-bold text-lg text-stone-900">Booking Confirmed!</h3>
+                <p class="text-xs text-stone-500">Your reservation has been recorded in the database.</p>
+            </div>
+
+            <!-- Receipt Card in Rupees -->
+            <div class="bg-stone-50 rounded-xl p-3.5 border border-stone-200 text-left text-xs space-y-2 font-mono">
+                <div class="flex justify-between text-stone-500 border-b border-stone-200 pb-1.5">
+                    <span>Receipt No:</span>
+                    <span id="receipt-id" class="font-bold text-stone-800">#ORD-101</span>
+                </div>
+                <div class="flex justify-between text-stone-500">
+                    <span>Item:</span>
+                    <span id="receipt-name" class="font-semibold text-stone-800 truncate max-w-[180px]">Flight Ticket</span>
+                </div>
+                <div class="flex justify-between text-stone-500">
+                    <span>Customer:</span>
+                    <span id="receipt-user" class="font-bold text-orange-600">User #42</span>
+                </div>
+                <div class="flex justify-between text-stone-500">
+                    <span>Amount Paid:</span>
+                    <span id="receipt-amount" class="font-bold text-stone-900 text-sm">₹2,999.00</span>
+                </div>
+                <div class="flex justify-between text-stone-500">
+                    <span>Seats Left:</span>
+                    <span id="receipt-remaining" class="font-bold text-emerald-600">24 Units</span>
+                </div>
+                <div class="flex justify-between text-stone-500 text-[10px]">
+                    <span>Processed By:</span>
+                    <span id="receipt-worker" class="text-stone-600">FlashWorker-2 (WAL)</span>
+                </div>
+            </div>
+
+            <button onclick="closeReceiptModal()" class="w-full py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-xl shadow-sm transition">
+                Close Receipt
+            </button>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast-box" class="fixed bottom-4 right-4 z-50 flex flex-col space-y-2 pointer-events-none"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>

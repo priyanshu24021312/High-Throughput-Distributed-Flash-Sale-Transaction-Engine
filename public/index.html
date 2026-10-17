@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚡ FLASH PULSE | High-Concurrency Flash Sale Engine</title>
+    <!-- Google Fonts: Inter & Outfit -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            cyan: '#06b6d4',
+                            glow: '#22d3ee',
+                            purple: '#8b5cf6',
+                            rose: '#f43f5e',
+                            emerald: '#10b981',
+                            dark: '#080c14',
+                            surface: '#0f172a',
+                            card: '#131e33',
+                            border: 'rgba(255, 255, 255, 0.08)'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        display: ['Outfit', 'sans-serif'],
+                        mono: ['"JetBrains Mono"', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Canvas Confetti CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-[#080c14] text-slate-100 min-h-screen selection:bg-cyan-500 selection:text-black font-sans antialiased overflow-x-hidden">
+
+    <!-- Top Glow Background Effects -->
+    <div class="fixed top-0 left-1/4 w-[600px] h-[300px] bg-cyan-500/10 rounded-full blur-[140px] pointer-events-none -z-10"></div>
+    <div class="fixed top-1/3 right-1/4 w-[500px] h-[400px] bg-purple-600/10 rounded-full blur-[160px] pointer-events-none -z-10"></div>
+
+    <!-- Navigation Header -->
+    <header class="sticky top-0 z-40 backdrop-blur-xl bg-[#080c14]/80 border-b border-white/10 transition-all">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <!-- Brand / Logo -->
+                <div class="flex items-center space-x-3 cursor-pointer" onclick="switchTab('store')">
+                    <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 via-indigo-500 to-purple-500 p-0.5 shadow-lg shadow-cyan-500/20 flex items-center justify-center animate-pulse">
+                        <div class="w-full h-full bg-[#080c14] rounded-[10px] flex items-center justify-center">
+                            <span class="text-xl">⚡</span>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex items-center space-x-2">
+                            <span class="font-display font-extrabold text-xl tracking-tight bg-gradient-to-r from-white via-cyan-200 to-purple-300 bg-clip-text text-transparent">FLASH PULSE</span>
+                            <span class="px-2 py-0.5 text-[10px] font-mono font-bold tracking-wider uppercase bg-cyan-500/20 text-cyan-400 rounded-full border border-cyan-500/30">v2.4 CONCURRENCY</span>
+                        </div>
+                        <p class="text-[11px] text-slate-400 font-mono tracking-tight">Zero-Oversell High-Throughput Engine</p>
+                    </div>
+                </div>
+
+                <!-- Navigation Tabs -->
+                <nav class="hidden md:flex items-center space-x-1 p-1 bg-slate-900/80 rounded-xl border border-white/5">
+                    <button onclick="switchTab('store')" id="tab-btn-store" class="nav-tab px-4 py-2 text-xs font-semibold rounded-lg transition-all duration-200 flex items-center space-x-2 text-white bg-white/10 shadow-sm">
+                        <span>🛍️</span>
+                        <span>Storefront</span>
+                    </button>
+                    <button onclick="switchTab('warroom')" id="tab-btn-warroom" class="nav-tab px-4 py-2 text-xs font-semibold rounded-lg transition-all duration-200 flex items-center space-x-2 text-slate-400 hover:text-white hover:bg-white/5">
+                        <span>🚀</span>
+                        <span>War Room (Stress Test)</span>
+                    </button>
+                    <button onclick="switchTab('products')" id="tab-btn-products" class="nav-tab px-4 py-2 text-xs font-semibold rounded-lg transition-all duration-200 flex items-center space-x-2 text-slate-400 hover:text-white hover:bg-white/5">
+                        <span>📦</span>
+                        <span>Products</span>
+                    </button>
+                    <button onclick="switchTab('ledger')" id="tab-btn-ledger" class="nav-tab px-4 py-2 text-xs font-semibold rounded-lg transition-all duration-200 flex items-center space-x-2 text-slate-400 hover:text-white hover:bg-white/5">
+                        <span>📜</span>
+                        <span>Audit Ledger</span>
+                    </button>
+                    <button onclick="switchTab('architecture')" id="tab-btn-architecture" class="nav-tab px-4 py-2 text-xs font-semibold rounded-lg transition-all duration-200 flex items-center space-x-2 text-slate-400 hover:text-white hover:bg-white/5">
+                        <span>🏛️</span>
+                        <span>Architecture</span>
+                    </button>
+                </nav>
+
+                <!-- Status & Action Controls -->
+                <div class="flex items-center space-x-3">
+                    <!-- Engine Status Pill -->
+                    <div id="engine-status-pill" class="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                        <span id="engine-label" class="font-medium truncate max-w-[140px] sm:max-w-none">In-Memory Engine</span>
+                    </div>
+
+                    <!-- Audio Toggle -->
+                    <button onclick="toggleAudio()" id="audio-toggle-btn" title="Toggle Sound FX" class="p-2 rounded-lg bg-slate-900 border border-white/10 text-slate-300 hover:text-white hover:bg-slate-800 transition">
+                        <span id="audio-icon">🔊</span>
+                    </button>
+
+                    <!-- Reset Current Drop Quick Action -->
+                    <button onclick="quickResetSelectedProduct()" title="Quick Restock Inventory" class="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/10 text-xs text-slate-300 hover:text-white transition">
+                        <span>🔄</span>
+                        <span>Restock</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mobile Nav Tabs -->
+        <div class="md:hidden flex overflow-x-auto px-4 py-2 space-x-2 border-t border-white/5 scrollbar-none">
+            <button onclick="switchTab('store')" class="mobile-tab px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap bg-white/10 text-white">🛍️ Store</button>
+            <button onclick="switchTab('warroom')" class="mobile-tab px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap text-slate-400">🚀 War Room</button>
+            <button onclick="switchTab('products')" class="mobile-tab px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap text-slate-400">📦 Products</button>
+            <button onclick="switchTab('ledger')" class="mobile-tab px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap text-slate-400">📜 Ledger</button>
+            <button onclick="switchTab('architecture')" class="mobile-tab px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap text-slate-400">🏛️ Architecture</button>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+        <!-- ============================================================ -->
+        <!-- TAB 1: CONSUMER FLASH STOREFRONT -->
+        <!-- ============================================================ -->
+        <section id="tab-store" class="space-y-8">
+            <!-- Hero Drop Header Banner -->
+            <div class="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-r from-slate-900 via-[#10192e] to-slate-900 p-6 sm:p-8 shadow-2xl">
+                <div class="absolute -right-10 -bottom-10 w-72 h-72 bg-gradient-to-br from-cyan-500/20 to-purple-600/20 rounded-full blur-3xl pointer-events-none"></div>
+
+                <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
+                    <div class="space-y-2 max-w-xl">
+                        <div class="flex items-center space-x-2">
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse">
+                                ● FLASH DROP LIVE
+                            </span>
+                            <span class="text-xs text-slate-400 font-mono">Row-Level Mutex Protection Active</span>
+                        </div>
+                        <h1 class="text-3xl sm:text-4xl font-display font-black tracking-tight text-white">
+                            High-Concurrency Drop Zone
+                        </h1>
+                        <p class="text-slate-400 text-sm leading-relaxed">
+                            Experience milliseconds-scale flash reservation. Simulated and real database rows are locked with ACID isolation (<code class="text-cyan-400 font-mono text-xs">SELECT ... FOR UPDATE</code>) preventing race conditions and double-spending.
+                        </p>
+                    </div>
+
+                    <!-- Countdown Clock Card -->
+                    <div class="bg-black/40 backdrop-blur-md rounded-xl p-4 border border-white/10 flex flex-col items-center justify-center min-w-[280px]">
+                        <span class="text-[11px] font-mono tracking-widest text-slate-400 uppercase mb-2">⚡ FLASH SALE ENDS IN</span>
+                        <div class="flex items-center space-x-2 text-center font-mono">
+                            <div class="bg-slate-900/90 border border-white/10 rounded-lg px-3 py-2 w-14">
+                                <span id="clock-hours" class="block text-xl font-bold text-white">02</span>
+                                <span class="text-[9px] text-slate-500 uppercase">Hours</span>
+                            </div>
+                            <span class="text-xl font-bold text-cyan-400">:</span>
+                            <div class="bg-slate-900/90 border border-white/10 rounded-lg px-3 py-2 w-14">
+                                <span id="clock-mins" class="block text-xl font-bold text-white">18</span>
+                                <span class="text-[9px] text-slate-500 uppercase">Mins</span>
+                            </div>
+                            <span class="text-xl font-bold text-cyan-400">:</span>
+                            <div class="bg-slate-900/90 border border-white/10 rounded-lg px-3 py-2 w-14">
+                                <span id="clock-secs" class="block text-xl font-bold text-cyan-400">45</span>
+                                <span class="text-[9px] text-slate-500 uppercase">Secs</span>
+                            </div>
+                            <span class="text-xl font-bold text-cyan-400">:</span>
+                            <div class="bg-slate-900/90 border border-white/10 rounded-lg px-2 py-2 w-12">
+                                <span id="clock-ms" class="block text-xl font-bold text-purple-400">82</span>
+                                <span class="text-[9px] text-slate-500 uppercase">Ms</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Featured Drop Card Grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                
+                <!-- Left: Big Product Showcase -->
+                <div class="lg:col-span-8 bg-slate-900/60 rounded-2xl border border-white/10 p-6 sm:p-8 backdrop-blur-md shadow-xl relative overflow-hidden">
+                    <!-- Drop Selector Switcher -->
+                    <div class="flex items-center justify-between mb-6 pb-4 border-b border-white/10">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-sm font-semibold text-slate-300">Select Active Item:</span>
+                            <select id="store-product-select" onchange="onSelectProductChange(this.value)" class="bg-slate-800 border border-white/10 text-white rounded-lg px-3 py-1.5 text-xs font-medium focus:ring-2 focus:ring-cyan-500 focus:outline-none">
+                                <!-- Populated dynamically -->
+                            </select>
+                        </div>
+                        <span id="store-stock-tag" class="px-3 py-1 rounded-full text-xs font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            IN STOCK
+                        </span>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-12 gap-6">
+                        <!-- Product Visual / Mock Art -->
+                        <div class="sm:col-span-5 flex flex-col items-center justify-center p-6 rounded-xl bg-gradient-to-b from-slate-800/80 to-slate-950/80 border border-white/5 relative group">
+                            <div id="product-art-container" class="w-48 h-48 flex items-center justify-center relative transition-transform duration-500 group-hover:scale-105">
+                                <div id="product-art-glow" class="absolute inset-0 bg-cyan-500/20 rounded-full blur-2xl"></div>
+                                <span id="product-art-emoji" class="text-7xl relative z-10 drop-shadow-[0_10px_20px_rgba(6,182,212,0.4)]">👟</span>
+                            </div>
+                            <div class="mt-4 text-center">
+                                <span class="text-[11px] font-mono uppercase tracking-widest text-cyan-400">Verified Drop Item</span>
+                                <p id="product-art-category" class="text-xs text-slate-400">Exclusive Flash Edition</p>
+                            </div>
+                        </div>
+
+                        <!-- Product Info & Purchase Controls -->
+                        <div class="sm:col-span-7 flex flex-col justify-between space-y-6">
+                            <div>
+                                <h2 id="store-product-title" class="text-2xl sm:text-3xl font-display font-black text-white tracking-tight">
+                                    Nike Air Mag - Cyberpunk Limited Edition
+                                </h2>
+                                <p id="store-product-desc" class="mt-2 text-slate-400 text-sm leading-relaxed">
+                                    Ultra-rare futuristic collector sneaker with auto-lacing technology. Flash drop limit: 50 pairs worldwide.
+                                </p>
+                            </div>
+
+                            <!-- Pricing Block -->
+                            <div class="flex items-baseline space-x-3">
+                                <span id="store-product-price" class="text-3xl font-mono font-black text-white">$499.99</span>
+                                <span id="store-product-original" class="text-base font-mono text-slate-500 line-through">$899.99</span>
+                                <span class="px-2 py-0.5 rounded text-xs font-mono font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30">-44% FLASH</span>
+                            </div>
+
+                            <!-- Live Stock Depletion Bar -->
+                            <div class="space-y-2">
+                                <div class="flex items-center justify-between text-xs font-mono">
+                                    <span class="text-slate-400 flex items-center space-x-1">
+                                        <span>Inventory Remaining:</span>
+                                    </span>
+                                    <span class="font-bold text-white">
+                                        <span id="store-available-qty" class="text-cyan-400 text-sm font-bold">50</span> / <span id="store-total-qty">50</span> Units
+                                    </span>
+                                </div>
+                                <div class="w-full h-3 bg-slate-950 rounded-full overflow-hidden p-0.5 border border-white/5">
+                                    <div id="store-stock-progress" class="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all duration-500 shadow-sm shadow-cyan-500/50" style="width: 100%;"></div>
+                                </div>
+                                <div class="flex justify-between text-[11px] text-slate-500 font-mono">
+                                    <span>High Concurrency Lock</span>
+                                    <span id="store-stock-pct">100% In Stock</span>
+                                </div>
+                            </div>
+
+                            <!-- User Identity Selection -->
+                            <div class="p-3 rounded-xl bg-slate-950/60 border border-white/5 flex items-center justify-between">
+                                <div class="flex items-center space-x-2">
+                                    <span class="text-lg">👤</span>
+                                    <div>
+                                        <div class="text-[10px] uppercase font-mono text-slate-400">Purchasing As</div>
+                                        <span id="current-user-display" class="text-xs font-mono font-semibold text-slate-200">User #42 (Alex K.)</span>
+                                    </div>
+                                </div>
+                                <button onclick="randomizeUser()" class="px-2.5 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono transition">
+                                    🎲 Randomize User
+                                </button>
+                            </div>
+
+                            <!-- Purchase CTA Button -->
+                            <button id="btn-buy-now" onclick="triggerSinglePurchase()" class="w-full py-4 px-6 rounded-xl font-display font-bold text-base uppercase tracking-wider text-black bg-gradient-to-r from-cyan-400 via-teal-300 to-emerald-400 hover:from-cyan-300 hover:to-emerald-300 transition-all duration-200 shadow-lg shadow-cyan-500/25 active:scale-[0.98] flex items-center justify-center space-x-2">
+                                <span class="text-xl">⚡</span>
+                                <span id="btn-buy-text">BUY NOW (INSTANT 1-CLICK CLAIM)</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: Real-time Drop Activity & Telemetry -->
+                <div class="lg:col-span-4 space-y-6">
+                    <!-- Concurrency Health Card -->
+                    <div class="bg-slate-900/60 rounded-2xl border border-white/10 p-5 backdrop-blur-md">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-sm font-semibold text-white flex items-center space-x-2">
+                                <span>🛡️</span>
+                                <span>Concurrency Safety</span>
+                            </h3>
+                            <span class="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">ACTIVE</span>
+                        </div>
+                        <div class="space-y-3 text-xs">
+                            <div class="flex justify-between items-center py-2 border-b border-white/5">
+                                <span class="text-slate-400">Locking Strategy</span>
+                                <span class="font-mono text-cyan-400">Pessimistic Row Lock</span>
+                            </div>
+                            <div class="flex justify-between items-center py-2 border-b border-white/5">
+                                <span class="text-slate-400">SQL Gatekeeper</span>
+                                <span class="font-mono text-slate-200">FOR UPDATE Mutex</span>
+                            </div>
+                            <div class="flex justify-between items-center py-2 border-b border-white/5">
+                                <span class="text-slate-400">Overselling Risk</span>
+                                <span class="font-mono text-emerald-400 font-bold">0.00% (Guaranteed)</span>
+                            </div>
+                            <div class="flex justify-between items-center py-2">
+                                <span class="text-slate-400">Multi-Buy Protection</span>
+                                <span class="font-mono text-slate-200">UNIQUE(user, item)</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live Purchase Stream / Ticker -->
+                    <div class="bg-slate-900/60 rounded-2xl border border-white/10 p-5 backdrop-blur-md">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-sm font-semibold text-white flex items-center space-x-2">
+                                <span>⚡</span>
+                                <span>Live Claim Stream</span>
+                            </h3>
+                            <span id="live-claim-count" class="text-xs font-mono text-slate-400">0 Claims</span>
+                        </div>
+                        <div id="live-claim-feed" class="space-y-2 max-h-[260px] overflow-y-auto pr-1 text-xs scrollbar-thin">
+                            <!-- Stream entries inserted dynamically -->
+                            <div class="text-slate-500 text-center py-8 font-mono text-xs">
+                                Ready for orders. Click "BUY NOW" or launch the War Room test!
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <!-- TAB 2: CONCURRENCY WAR ROOM (STRESS TEST SIMULATOR) -->
+        <!-- ============================================================ -->
+        <section id="tab-warroom" class="space-y-8 hidden">
+            <!-- War Room Banner -->
+            <div class="rounded-2xl border border-cyan-500/30 bg-gradient-to-r from-slate-900 via-cyan-950/30 to-slate-900 p-6 sm:p-8 relative overflow-hidden shadow-2xl">
+                <div class="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                    <div>
+                        <div class="flex items-center space-x-2 mb-2">
+                            <span class="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold uppercase bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+                                ⚡ MULTITHREADED STRESS LAB
+                            </span>
+                            <span class="text-xs text-slate-400 font-mono">Simulates Main.java & UserThread.java</span>
+                        </div>
+                        <h2 class="text-3xl font-display font-black text-white tracking-tight">
+                            High-Concurrency Flash Attack Simulator
+                        </h2>
+                        <p class="text-slate-400 text-sm max-w-2xl mt-1">
+                            Spawn up to 1,000 simultaneous threads attempting to claim the same stock. Observe race condition prevention, thread response latency, throughput (TPS), and mathematical database consistency in real-time.
+                        </p>
+                    </div>
+
+                    <div class="flex items-center space-x-3">
+                        <button onclick="launchSimulation()" id="btn-run-simulation" class="px-6 py-3.5 rounded-xl font-display font-bold text-sm uppercase tracking-wider text-black bg-gradient-to-r from-cyan-400 via-teal-300 to-emerald-400 hover:from-cyan-300 hover:to-emerald-300 transition shadow-lg shadow-cyan-500/20 flex items-center space-x-2">
+                            <span class="text-lg">🚀</span>
+                            <span id="btn-sim-text">LAUNCH FLASH ATTACK</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Configuration & Controls -->
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-6">
+                <!-- Config Card -->
+                <div class="md:col-span-5 bg-slate-900/60 rounded-2xl border border-white/10 p-6 space-y-6 backdrop-blur-md">
+                    <h3 class="text-sm font-semibold text-white uppercase tracking-wider font-mono flex items-center space-x-2">
+                        <span>⚙️</span>
+                        <span>Simulation Parameters</span>
+                    </h3>
+
+                    <!-- Target Product -->
+                    <div class="space-y-2">
+                        <label class="text-xs text-slate-400 font-mono">Target Flash Item:</label>
+                        <select id="sim-product-select" class="w-full bg-slate-800 border border-white/10 text-white rounded-xl px-3 py-2 text-xs font-medium focus:ring-2 focus:ring-cyan-500 focus:outline-none">
+                            <!-- Populated dynamically -->
+                        </select>
+                    </div>
+
+                    <!-- Thread Count Slider & Presets -->
+                    <div class="space-y-3">
+                        <div class="flex justify-between items-center text-xs font-mono">
+                            <span class="text-slate-400">Concurrent User Threads:</span>
+                            <span id="sim-thread-count-display" class="text-base font-bold text-cyan-400">100 Threads</span>
+                        </div>
+                        <input type="range" id="sim-thread-slider" min="10" max="1000" step="10" value="100" oninput="updateThreadSlider(this.value)" class="w-full accent-cyan-400 bg-slate-800 rounded-lg h-2 cursor-pointer">
+                        <div class="flex items-center justify-between gap-1.5 pt-1">
+                            <button onclick="setThreadPreset(25)" class="px-2.5 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 font-mono text-slate-300 transition">25</button>
+                            <button onclick="setThreadPreset(50)" class="px-2.5 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 font-mono text-slate-300 transition">50</button>
+                            <button onclick="setThreadPreset(100)" class="px-2.5 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 font-mono text-cyan-400 font-bold border border-cyan-500/30 transition">100</button>
+                            <button onclick="setThreadPreset(250)" class="px-2.5 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 font-mono text-slate-300 transition">250</button>
+                            <button onclick="setThreadPreset(500)" class="px-2.5 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 font-mono text-slate-300 transition">500</button>
+                        </div>
+                    </div>
+
+                    <!-- Execution Mode Selection -->
+                    <div class="space-y-2">
+                        <label class="text-xs text-slate-400 font-mono">Concurrency Algorithm:</label>
+                        <div class="space-y-2">
+                            <label class="flex items-start space-x-3 p-3 rounded-xl bg-slate-800/60 border border-cyan-500/30 cursor-pointer">
+                                <input type="radio" name="sim_mode" value="safe" checked class="mt-0.5 accent-cyan-400">
+                                <div>
+                                    <div class="text-xs font-semibold text-white">🔒 Protected Engine (ACID Safe)</div>
+                                    <p class="text-[11px] text-slate-400">Uses Java <code class="text-cyan-300">synchronized</code> and SQL <code class="text-cyan-300">FOR UPDATE</code>. Zero overselling guarantee.</p>
+                                </div>
+                            </label>
+                            <label class="flex items-start space-x-3 p-3 rounded-xl bg-slate-800/30 border border-white/5 hover:border-rose-500/30 cursor-pointer transition">
+                                <input type="radio" name="sim_mode" value="race" class="mt-0.5 accent-rose-500">
+                                <div>
+                                    <div class="text-xs font-semibold text-rose-300">⚠️ Unprotected Demo (Show Bug!)</div>
+                                    <p class="text-[11px] text-slate-400">Simulates unsynchronized reads/writes to illustrate the devastating race condition.</p>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Quick Restock button for simulation -->
+                    <button onclick="quickResetSelectedProduct()" class="w-full py-2.5 px-4 rounded-xl text-xs font-mono font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 border border-white/10 transition flex items-center justify-center space-x-2">
+                        <span>🔄</span>
+                        <span>Restock Target Inventory to 100%</span>
+                    </button>
+                </div>
+
+                <!-- Simulation Telemetry & Auditor Results -->
+                <div class="md:col-span-7 space-y-6">
+                    <!-- Key Telemetry Cards -->
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div class="bg-slate-900/60 p-4 rounded-xl border border-white/10 text-center">
+                            <span class="text-[10px] font-mono uppercase text-slate-400">Execution Time</span>
+                            <div id="telemetry-time" class="text-2xl font-mono font-black text-cyan-400 mt-1">-- ms</div>
+                        </div>
+                        <div class="bg-slate-900/60 p-4 rounded-xl border border-white/10 text-center">
+                            <span class="text-[10px] font-mono uppercase text-slate-400">Throughput</span>
+                            <div id="telemetry-tps" class="text-2xl font-mono font-black text-purple-400 mt-1">-- TPS</div>
+                        </div>
+                        <div class="bg-slate-900/60 p-4 rounded-xl border border-white/10 text-center">
+                            <span class="text-[10px] font-mono uppercase text-emerald-400">Successful</span>
+                            <div id="telemetry-success" class="text-2xl font-mono font-black text-emerald-400 mt-1">0</div>
+                        </div>
+                        <div class="bg-slate-900/60 p-4 rounded-xl border border-white/10 text-center">
+                            <span class="text-[10px] font-mono uppercase text-rose-400">Rejected / Sold Out</span>
+                            <div id="telemetry-failed" class="text-2xl font-mono font-black text-rose-400 mt-1">0</div>
+                        </div>
+                    </div>
+
+                    <!-- Mathematical Consistency Audit Banner -->
+                    <div id="audit-banner" class="p-5 rounded-2xl border border-white/10 bg-slate-900/80 backdrop-blur-md flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <div class="flex items-center space-x-3">
+                            <div id="audit-icon" class="w-12 h-12 rounded-xl bg-slate-800 flex items-center justify-center text-2xl">
+                                ⚖️
+                            </div>
+                            <div>
+                                <span class="text-[11px] font-mono text-slate-400 uppercase tracking-wider">DATABASE CONSISTENCY VERIFIER</span>
+                                <h4 id="audit-title" class="text-base font-bold text-white">Simulation Idle - Awaiting Attack Run</h4>
+                                <p id="audit-subtitle" class="text-xs text-slate-400">Formula: <code class="font-mono text-cyan-400">Initial Stock == Successful Claims + Remaining Stock</code></p>
+                            </div>
+                        </div>
+                        <span id="audit-badge" class="px-3 py-1 rounded-full text-xs font-mono font-bold bg-slate-800 text-slate-400">
+                            STANDBY
+                        </span>
+                    </div>
+
+                    <!-- Thread Swarm Visualizer -->
+                    <div class="bg-slate-900/60 rounded-2xl border border-white/10 p-5 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-xs font-semibold text-white uppercase tracking-wider font-mono flex items-center space-x-2">
+                                <span>🧬</span>
+                                <span>Live Thread Node Matrix</span>
+                            </h3>
+                            <div class="flex items-center space-x-3 text-[10px] font-mono">
+                                <span class="flex items-center space-x-1"><span class="w-2 h-2 rounded-full bg-emerald-400"></span><span class="text-slate-400">Won Ticket</span></span>
+                                <span class="flex items-center space-x-1"><span class="w-2 h-2 rounded-full bg-rose-400"></span><span class="text-slate-400">Rejected</span></span>
+                                <span class="flex items-center space-x-1"><span class="w-2 h-2 rounded-full bg-slate-700"></span><span class="text-slate-400">Idle</span></span>
+                            </div>
+                        </div>
+                        <!-- Thread Node Dots Container -->
+                        <div id="thread-matrix" class="grid grid-cols-10 sm:grid-cols-20 gap-1.5 p-3 rounded-xl bg-slate-950/80 border border-white/5 max-h-[160px] overflow-y-auto">
+                            <!-- Populated with thread nodes -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Analytics Charts -->
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-6">
+                <div class="md:col-span-5 bg-slate-900/60 rounded-2xl border border-white/10 p-5 backdrop-blur-md">
+                    <h3 class="text-xs font-semibold text-white uppercase tracking-wider font-mono mb-4">
+                        📊 Outcome Distribution
+                    </h3>
+                    <div class="h-56 relative flex items-center justify-center">
+                        <canvas id="outcome-chart"></canvas>
+                    </div>
+                </div>
+                <div class="md:col-span-7 bg-slate-900/60 rounded-2xl border border-white/10 p-5 backdrop-blur-md">
+                    <h3 class="text-xs font-semibold text-white uppercase tracking-wider font-mono mb-4">
+                        ⏱️ Thread Response Latency (ms)
+                    </h3>
+                    <div class="h-56 relative">
+                        <canvas id="latency-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <!-- TAB 3: PRODUCT & INVENTORY MANAGER -->
+        <!-- ============================================================ -->
+        <section id="tab-products" class="space-y-8 hidden">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                    <h2 class="text-2xl font-display font-black text-white">Product & Inventory Catalog</h2>
+                    <p class="text-xs text-slate-400 font-mono">Manage active drops, initial quotas, prices, and instant restocks.</p>
+                </div>
+                <button onclick="openAddProductModal()" class="px-4 py-2.5 rounded-xl text-xs font-bold text-black bg-cyan-400 hover:bg-cyan-300 transition font-display flex items-center space-x-2 self-start sm:self-auto">
+                    <span>➕</span>
+                    <span>Create Flash Sale Product</span>
+                </button>
+            </div>
+
+            <!-- Products Grid -->
+            <div id="products-catalog-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Product cards inserted dynamically -->
+            </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <!-- TAB 4: TRANSACTION AUDIT LEDGER -->
+        <!-- ============================================================ -->
+        <section id="tab-ledger" class="space-y-6 hidden">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                    <h2 class="text-2xl font-display font-black text-white">Live Transaction Audit Ledger</h2>
+                    <p class="text-xs text-slate-400 font-mono">ACID committed purchase records with timestamps and thread latency.</p>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button onclick="exportLedgerCSV()" class="px-3.5 py-2 rounded-xl text-xs font-mono font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 border border-white/10 transition flex items-center space-x-1.5">
+                        <span>📥</span>
+                        <span>Export CSV</span>
+                    </button>
+                    <button onclick="clearPurchases()" class="px-3.5 py-2 rounded-xl text-xs font-mono font-medium text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 transition flex items-center space-x-1.5">
+                        <span>🗑️</span>
+                        <span>Clear History</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Ledger Summary Stats -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div class="bg-slate-900/60 p-4 rounded-xl border border-white/10">
+                    <span class="text-xs text-slate-400 font-mono">Total Verified Orders</span>
+                    <div id="ledger-total-count" class="text-2xl font-bold font-mono text-white mt-1">0</div>
+                </div>
+                <div class="bg-slate-900/60 p-4 rounded-xl border border-white/10">
+                    <span class="text-xs text-slate-400 font-mono">Gross Transaction Volume</span>
+                    <div id="ledger-total-volume" class="text-2xl font-bold font-mono text-emerald-400 mt-1">$0.00</div>
+                </div>
+                <div class="bg-slate-900/60 p-4 rounded-xl border border-white/10">
+                    <span class="text-xs text-slate-400 font-mono">Avg Claim Latency</span>
+                    <div id="ledger-avg-latency" class="text-2xl font-bold font-mono text-cyan-400 mt-1">-- ms</div>
+                </div>
+            </div>
+
+            <!-- Search & Filters -->
+            <div class="flex flex-col sm:flex-row gap-3">
+                <input type="text" id="ledger-search-input" oninput="filterLedgerTable()" placeholder="Search by User ID, Purchase ID, or Product Name..." class="flex-1 bg-slate-900/80 border border-white/10 text-white rounded-xl px-4 py-2.5 text-xs focus:ring-2 focus:ring-cyan-500 focus:outline-none">
+            </div>
+
+            <!-- Ledger Table -->
+            <div class="overflow-x-auto rounded-2xl border border-white/10 bg-slate-900/40 backdrop-blur-md">
+                <table class="w-full text-left text-xs">
+                    <thead class="bg-slate-950/80 text-slate-400 font-mono uppercase text-[10px] tracking-wider border-b border-white/5">
+                        <tr>
+                            <th class="py-3 px-4">Purchase ID</th>
+                            <th class="py-3 px-4">User ID</th>
+                            <th class="py-3 px-4">Product Name</th>
+                            <th class="py-3 px-4">Status</th>
+                            <th class="py-3 px-4">Timestamp</th>
+                            <th class="py-3 px-4 text-right">Latency</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ledger-table-body" class="divide-y divide-white/5 font-mono">
+                        <!-- Populated dynamically -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <!-- TAB 5: ARCHITECTURE & RACE CONDITIONS -->
+        <!-- ============================================================ -->
+        <section id="tab-architecture" class="space-y-8 hidden">
+            <div>
+                <h2 class="text-2xl font-display font-black text-white">Concurrency Engine Architecture</h2>
+                <p class="text-xs text-slate-400 font-mono">How the Flash Sale System achieves 100% data consistency under high concurrent load.</p>
+            </div>
+
+            <!-- Multi-layered Defense Visual Flow -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="bg-slate-900/60 p-5 rounded-2xl border border-cyan-500/30 relative">
+                    <div class="w-8 h-8 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center font-bold text-sm mb-3">1</div>
+                    <h3 class="text-sm font-bold text-white">Java Mutex Layer</h3>
+                    <code class="text-[11px] text-cyan-400 font-mono block mt-1">FlashSale.purchase()</code>
+                    <p class="text-xs text-slate-400 mt-2">
+                        Marked with <span class="text-cyan-300 font-mono">synchronized</span>. Acts as an application-level mutex gatekeeper so concurrent threads enter the critical section in strict mutual exclusion.
+                    </p>
+                </div>
+
+                <div class="bg-slate-900/60 p-5 rounded-2xl border border-purple-500/30 relative">
+                    <div class="w-8 h-8 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold text-sm mb-3">2</div>
+                    <h3 class="text-sm font-bold text-white">Database Row Lock</h3>
+                    <code class="text-[11px] text-purple-400 font-mono block mt-1">SELECT ... FOR UPDATE</code>
+                    <p class="text-xs text-slate-400 mt-2">
+                        Pessimistic exclusive row lock on the target product row in MySQL or ReentrantLock in memory, preventing dirty reads or concurrent decrements.
+                    </p>
+                </div>
+
+                <div class="bg-slate-900/60 p-5 rounded-2xl border border-emerald-500/30 relative">
+                    <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-sm mb-3">3</div>
+                    <h3 class="text-sm font-bold text-white">Atomic State Transition</h3>
+                    <code class="text-[11px] text-emerald-400 font-mono block mt-1">UPDATE product SET qty - 1</code>
+                    <p class="text-xs text-slate-400 mt-2">
+                        Decrements quantity conditionally. If quantity hits zero, updates status atomically to <span class="text-rose-400 font-mono">'SOLD OUT'</span>.
+                    </p>
+                </div>
+
+                <div class="bg-slate-900/60 p-5 rounded-2xl border border-amber-500/30 relative">
+                    <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-sm mb-3">4</div>
+                    <h3 class="text-sm font-bold text-white">ACID Two-Phase Commit</h3>
+                    <code class="text-[11px] text-amber-400 font-mono block mt-1">con.commit() / rollback()</code>
+                    <p class="text-xs text-slate-400 mt-2">
+                        If quantity is exhausted or user already purchased (<span class="text-amber-300 font-mono">UNIQUE(user, item)</span>), transaction automatically rolls back.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Visual Comparison: Naive vs Protected -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Unprotected Race Condition Flow -->
+                <div class="bg-slate-900/60 p-6 rounded-2xl border border-rose-500/30 space-y-4">
+                    <div class="flex items-center space-x-2 text-rose-400">
+                        <span>❌</span>
+                        <h4 class="font-bold text-sm uppercase font-mono">Naive Implementation (Lost Update Flaw)</h4>
+                    </div>
+                    <div class="p-3 bg-slate-950 rounded-xl font-mono text-[11px] text-slate-300 space-y-1.5 border border-white/5">
+                        <div class="text-slate-500">// Thread 1 & Thread 2 arrive at stock = 1</div>
+                        <div>T1: SELECT stock -> reads 1</div>
+                        <div>T2: SELECT stock -> reads 1 (Race window!)</div>
+                        <div>T1: UPDATE stock = 1 - 1 = 0 (Success)</div>
+                        <div class="text-rose-400">T2: UPDATE stock = 1 - 1 = -1 (OVERSELLING BUG!)</div>
+                    </div>
+                    <p class="text-xs text-slate-400">
+                        Without mutual exclusion, both threads evaluate available stock as positive simultaneously, causing stock to become negative or overbooked.
+                    </p>
+                </div>
+
+                <!-- Protected Synchronized Flow -->
+                <div class="bg-slate-900/60 p-6 rounded-2xl border border-emerald-500/30 space-y-4">
+                    <div class="flex items-center space-x-2 text-emerald-400">
+                        <span>✅</span>
+                        <h4 class="font-bold text-sm uppercase font-mono">Flash Pulse Protected Engine</h4>
+                    </div>
+                    <div class="p-3 bg-slate-950 rounded-xl font-mono text-[11px] text-slate-300 space-y-1.5 border border-white/5">
+                        <div class="text-slate-500">// Thread 1 enters synchronized section</div>
+                        <div>T1: Acquires Row Lock -> reads 1</div>
+                        <div>T2: Blocked at Lock Queue (Wait state)</div>
+                        <div>T1: UPDATE stock = 0 -> COMMIT -> Releases Lock</div>
+                        <div class="text-emerald-400">T2: Acquires Lock -> reads 0 -> ROLLBACK (Clean 'SOLD OUT')</div>
+                    </div>
+                    <p class="text-xs text-slate-400">
+                        Serializability ensures every decrement is strictly isolated. Exactly the intended number of tickets are distributed, zero overselling occurs.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Purchase Confirmation Ticket Modal -->
+    <div id="modal-ticket" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md hidden transition-opacity">
+        <div class="bg-gradient-to-b from-slate-900 to-slate-950 border border-cyan-500/40 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl relative overflow-hidden text-center space-y-6">
+            <!-- Glowing background aura -->
+            <div class="absolute -top-24 -left-24 w-48 h-48 bg-cyan-500/30 rounded-full blur-3xl pointer-events-none"></div>
+            <div class="absolute -bottom-24 -right-24 w-48 h-48 bg-purple-500/30 rounded-full blur-3xl pointer-events-none"></div>
+
+            <div class="w-16 h-16 rounded-2xl bg-gradient-to-tr from-cyan-400 to-emerald-400 mx-auto flex items-center justify-center text-3xl shadow-lg shadow-cyan-500/30">
+                🎉
+            </div>
+
+            <div>
+                <span class="text-xs font-mono font-bold uppercase tracking-widest text-cyan-400">RESERVATION CONFIRMED</span>
+                <h3 class="text-2xl font-display font-black text-white mt-1">Ticket Claimed Successfully!</h3>
+                <p class="text-xs text-slate-400 mt-1">ACID transaction verified. Inventory decremented by 1.</p>
+            </div>
+
+            <!-- Receipt Ticket Details -->
+            <div class="bg-slate-900/90 rounded-2xl p-4 border border-white/10 text-left font-mono text-xs space-y-2.5">
+                <div class="flex justify-between items-center text-slate-400 pb-2 border-b border-white/5">
+                    <span>Order ID:</span>
+                    <span id="ticket-order-id" class="text-white font-bold">#ORD-94812</span>
+                </div>
+                <div class="flex justify-between items-center text-slate-400">
+                    <span>Item:</span>
+                    <span id="ticket-product-name" class="text-white font-medium truncate max-w-[200px]">Product</span>
+                </div>
+                <div class="flex justify-between items-center text-slate-400">
+                    <span>Customer:</span>
+                    <span id="ticket-user-id" class="text-cyan-400 font-bold">User #42</span>
+                </div>
+                <div class="flex justify-between items-center text-slate-400">
+                    <span>Remaining Stock:</span>
+                    <span id="ticket-remaining" class="text-emerald-400 font-bold">49 Units</span>
+                </div>
+                <div class="flex justify-between items-center text-slate-400">
+                    <span>Lock Latency:</span>
+                    <span id="ticket-latency" class="text-purple-400 font-bold">2.4 ms</span>
+                </div>
+            </div>
+
+            <button onclick="closeTicketModal()" class="w-full py-3 rounded-xl font-display font-bold text-sm text-black bg-cyan-400 hover:bg-cyan-300 transition">
+                CLOSE RECEIPT
+            </button>
+        </div>
+    </div>
+
+    <!-- Create Product Modal -->
+    <div id="modal-add-product" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md hidden transition-opacity">
+        <div class="bg-slate-900 border border-white/10 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl relative space-y-5">
+            <div class="flex items-center justify-between pb-3 border-b border-white/10">
+                <h3 class="text-lg font-bold text-white flex items-center space-x-2">
+                    <span>📦</span>
+                    <span>Create Flash Sale Product</span>
+                </h3>
+                <button onclick="closeAddProductModal()" class="text-slate-400 hover:text-white text-lg">✕</button>
+            </div>
+
+            <form onsubmit="handleCreateProductSubmit(event)" class="space-y-4 text-xs font-mono">
+                <div class="space-y-1">
+                    <label class="text-slate-400">Product / Event Name:</label>
+                    <input type="text" id="new-prod-name" required placeholder="e.g. GeForce RTX 5090 Founders Edition" class="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white focus:ring-2 focus:ring-cyan-500 focus:outline-none">
+                </div>
+
+                <div class="space-y-1">
+                    <label class="text-slate-400">Description:</label>
+                    <textarea id="new-prod-desc" rows="2" placeholder="Flash drop details, limits, and specifications" class="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white focus:ring-2 focus:ring-cyan-500 focus:outline-none"></textarea>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="space-y-1">
+                        <label class="text-slate-400">Total Quantity:</label>
+                        <input type="number" id="new-prod-qty" min="1" max="10000" value="50" required class="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white focus:ring-2 focus:ring-cyan-500 focus:outline-none">
+                    </div>
+                    <div class="space-y-1">
+                        <label class="text-slate-400">Ticket Price ($):</label>
+                        <input type="number" id="new-prod-price" min="0" step="0.01" value="299.99" required class="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white focus:ring-2 focus:ring-cyan-500 focus:outline-none">
+                    </div>
+                </div>
+
+                <div class="flex justify-end space-x-2 pt-2">
+                    <button type="button" onclick="closeAddProductModal()" class="px-4 py-2 rounded-xl text-slate-400 hover:text-white bg-slate-800">Cancel</button>
+                    <button type="submit" class="px-5 py-2 rounded-xl text-black font-bold bg-cyan-400 hover:bg-cyan-300 font-display">Create Drop</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
