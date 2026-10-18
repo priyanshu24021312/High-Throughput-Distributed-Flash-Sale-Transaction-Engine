@@ -66,6 +66,12 @@ A worker pool reuses a fixed number of threads and a bounded queue to manage inc
 
 WAL records transaction information before the corresponding changes are considered durable. During recovery, the log can help restore a consistent state after a failure.
 
+Development Tools
+
+The project is developed using Visual Studio Code, with Git and GitHub used to manage source code and track changes.
+
+The prototype combines a web-based interface with backend processing for product management and purchase requests.
+
 ---
 
 **Project:** High-Throughput Distributed Flash-Sale Transaction Engine
