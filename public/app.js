@@ -1,397 +1,241 @@
 /**
- * FLASH PULSE | High-Concurrency Flash Sale Frontend Engine
- * Real-time concurrency visualization, ACID auditing, and storefront drops.
+ * FlashDeals - B.Tech 5th Semester Mini Project
+ * Frontend code (plain JavaScript)
+ * - fetch API to talk with the Java backend
+ * - customer view and admin view
+ * - WorkerPool, WAL and Wait-For Graph display
  */
 
-// ==========================================
-// Application State
-// ==========================================
-const state = {
-    isLiveBackend: false,
-    audioEnabled: true,
-    currentTab: 'store',
-    currentUser: { id: 42, name: 'Alex K.' },
-    products: [],
-    selectedProductId: 1,
-    purchases: [],
-    simThreadCount: 100,
-    simRunning: false,
-    charts: {
-        outcome: null,
-        latency: null
-    }
-};
+// ---------- 1. Variables ----------
+let products = [];
+let orders = [];
+let selectedProductId = 1;
+let currentCategory = 'all';
+let isAdminLoggedIn = sessionStorage.getItem('admin_logged_in') === 'true';
+let currentAdminTab = 'inventory';   // inventory, orders, algorithms
 
-// User avatar directory for simulated users
-const USER_NAMES = [
-    'Sarah C.', 'Alex K.', 'Devon M.', 'Elena R.', 'Marcus V.',
-    'Priya N.', 'Lucas T.', 'Zara H.', 'Liam B.', 'Chloe W.',
-    'Kenji S.', 'Fatima A.', 'Mateo G.', 'Aria P.', 'Noah J.'
+// users for testing many buyers
+const studentUsers = [
+    { id: 42, name: 'Rahul Sharma' },
+    { id: 101, name: 'Priya Verma' },
+    { id: 108, name: 'Amit Patel' },
+    { id: 142, name: 'Neha Gupta' },
+    { id: 205, name: 'Ananya Singh' },
+    { id: 312, name: 'Vikram Joshi' },
+    { id: 450, name: 'Sneha Reddy' }
 ];
+let activeUser = studentUsers[0];
 
-// Product Emoji / Graphic Map
-const PRODUCT_EMOJIS = {
-    sneaker: '👟',
+const categoryIcons = {
+    flight: '✈️',
+    train: '🚆',
+    ticket: '🎫',
+    smartwatch: '⌚',
+    ring: '💍',
+    wearable: '🎽',
     console: '🎮',
     phone: '📱',
-    ticket: '🎫',
     tech: '⚡'
 };
 
-// ==========================================
-// Web Audio Synthesizer (Zero Dependencies)
-// ==========================================
-let audioCtx = null;
-
-function getAudioContext() {
-    if (!audioCtx) {
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        if (AudioContext) audioCtx = new AudioContext();
-    }
-    if (audioCtx && audioCtx.state === 'suspended') {
-        audioCtx.resume();
-    }
-    return audioCtx;
-}
-
-function playClickSound() {
-    if (!state.audioEnabled) return;
-    try {
-        const ctx = getAudioContext();
-        if (!ctx) return;
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(800, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(300, ctx.currentTime + 0.04);
-        gain.gain.setValueAtTime(0.08, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.04);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.04);
-    } catch (e) {}
-}
-
-function playSuccessChime() {
-    if (!state.audioEnabled) return;
-    try {
-        const ctx = getAudioContext();
-        if (!ctx) return;
-        const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6 arpeggio
-        notes.forEach((freq, i) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.type = 'sine';
-            osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.07);
-            gain.gain.setValueAtTime(0.12, ctx.currentTime + i * 0.07);
-            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.07 + 0.35);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start(ctx.currentTime + i * 0.07);
-            osc.stop(ctx.currentTime + i * 0.07 + 0.35);
-        });
-    } catch (e) {}
-}
-
-function playFailThud() {
-    if (!state.audioEnabled) return;
-    try {
-        const ctx = getAudioContext();
-        if (!ctx) return;
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(140, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.15);
-        gain.gain.setValueAtTime(0.15, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.15);
-    } catch (e) {}
-}
-
-function playLaunchSound() {
-    if (!state.audioEnabled) return;
-    try {
-        const ctx = getAudioContext();
-        if (!ctx) return;
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(200, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(900, ctx.currentTime + 0.2);
-        gain.gain.setValueAtTime(0.1, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.22);
-    } catch (e) {}
-}
-
-function toggleAudio() {
-    state.audioEnabled = !state.audioEnabled;
-    const icon = document.getElementById('audio-icon');
-    if (icon) icon.textContent = state.audioEnabled ? '🔊' : '🔇';
-    showToast(state.audioEnabled ? 'Sound FX Enabled' : 'Sound FX Muted', 'info');
-}
-
-// ==========================================
-// Initialization & Backend Sync
-// ==========================================
+// ---------- 2. Page start ----------
 document.addEventListener('DOMContentLoaded', async () => {
-    initCountdownClock();
-    randomizeUser();
-    initCharts();
-    await checkBackendConnection();
-    await fetchProducts();
-    await fetchPurchases();
+    startCountdownTimer();
+    updateUserDisplay();
+    updateAdminButton();
 
-    // Periodic synchronization
+    await loadProducts();
+    await loadOrders();
+
+    if (isAdminLoggedIn && window.location.hash === '#admin') {
+        showAdminPanel();
+    } else {
+        showCustomerStore();
+    }
+
+    // refresh every 3 seconds so stock is live
     setInterval(async () => {
-        if (!state.simRunning) {
-            await fetchProducts(true);
-            await fetchPurchases(true);
+        await loadProducts(true);
+        if (isAdminLoggedIn) {
+            await loadAdminOverview(true);
+            if (currentAdminTab === 'algorithms') {
+                await loadAlgorithmTelemetry(true);
+            }
         }
     }, 3000);
 });
 
-async function checkBackendConnection() {
-    const engineLabel = document.getElementById('engine-label');
-    const pill = document.getElementById('engine-status-pill');
-
+// ---------- 3. Get data from backend ----------
+async function loadProducts(silent = false) {
     try {
-        const res = await fetch('/api/status', { cache: 'no-store' });
-        if (res.ok) {
-            const data = await res.json();
-            state.isLiveBackend = true;
-            if (engineLabel) engineLabel.textContent = data.engine || 'JVM Backend Connected';
-            if (pill) {
-                pill.className = 'flex items-center space-x-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono';
-            }
-            return;
+        const response = await fetch('/api/products');
+        if (response.ok) {
+            products = await response.json();
+            renderStorefront();
+            if (isAdminLoggedIn) renderAdminProducts();
         }
-    } catch (e) {}
-
-    // Fallback: Offline / Direct client mode
-    state.isLiveBackend = false;
-    if (engineLabel) engineLabel.textContent = 'Demo Mode (Client Engine)';
-    if (pill) {
-        pill.className = 'flex items-center space-x-2 px-3 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-mono';
-    }
-    seedMockProducts();
-}
-
-function seedMockProducts() {
-    if (state.products.length === 0) {
-        state.products = [
-            {
-                id: 1,
-                name: 'Nike Air Mag - Cyberpunk Limited Edition',
-                description: 'Ultra-rare futuristic collector sneaker with auto-lacing technology. Flash drop limit: 50 pairs worldwide.',
-                totalQuantity: 50,
-                availableQuantity: 50,
-                price: 499.99,
-                status: 'ACTIVE',
-                imageUrl: 'sneaker'
-            },
-            {
-                id: 2,
-                name: 'PlayStation 5 Pro - 30th Anniversary Edition',
-                description: 'Limited retro-themed collector edition PS5 Pro console. 2TB SSD with custom DualSense controller.',
-                totalQuantity: 30,
-                availableQuantity: 30,
-                price: 699.99,
-                status: 'ACTIVE',
-                imageUrl: 'console'
-            },
-            {
-                id: 3,
-                name: 'Coldplay: Music of the Spheres - VIP Front Row Ticket',
-                description: 'Exclusive VIP Lounge access, early venue entry, and backstage merchandise bundle.',
-                totalQuantity: 100,
-                availableQuantity: 100,
-                price: 199.50,
-                status: 'ACTIVE',
-                imageUrl: 'ticket'
-            }
-        ];
-        renderProducts();
+    } catch (error) {
+        if (!silent) console.log('Running in local/offline demo mode.');
+        loadSampleProducts();
     }
 }
 
-// ==========================================
-// Product Data Fetching & Rendering
-// ==========================================
-async function fetchProducts(isSilent = false) {
-    if (!state.isLiveBackend) {
-        renderProducts();
+async function loadOrders(silent = false) {
+    try {
+        const response = await fetch('/api/admin/purchases');
+        if (response.ok) {
+            orders = await response.json();
+            if (isAdminLoggedIn) renderAdminOrders();
+        }
+    } catch (error) {
+        if (!silent) console.log('Orders fetch offline.');
+    }
+}
+
+async function loadAdminOverview(silent = false) {
+    try {
+        const response = await fetch('/api/admin/overview');
+        if (response.ok) {
+            const data = await response.json();
+            document.getElementById('stat-revenue').textContent = `₹${formatRupees(data.totalRevenue)}`;
+            document.getElementById('stat-orders').textContent = data.totalOrders;
+            document.getElementById('stat-items').textContent = data.totalProducts;
+            document.getElementById('stat-stock').textContent = `${data.totalStockRemaining} Units`;
+        }
+    } catch (error) {
+        // server is off, so count from the data we already have
+        let totalRevenue = 0;
+        orders.forEach(order => totalRevenue += (order.price || 0));
+        let totalStock = 0;
+        products.forEach(product => totalStock += (product.availableQuantity || 0));
+
+        document.getElementById('stat-revenue').textContent = `₹${formatRupees(totalRevenue)}`;
+        document.getElementById('stat-orders').textContent = orders.length;
+        document.getElementById('stat-items').textContent = products.length;
+        document.getElementById('stat-stock').textContent = `${totalStock} Units`;
+    }
+}
+
+// sample products if the server is not running
+function loadSampleProducts() {
+    if (products.length > 0) return;
+
+    products = [
+        { id: 1, name: 'Air India Express: Delhi to Goa Flash Flight', description: 'Direct flight ticket with 15kg baggage allowance and free seat selection.', totalQuantity: 25, availableQuantity: 25, price: 2999.00, originalPrice: 6999.00, category: 'travel', imageUrl: 'flight' },
+        { id: 2, name: 'Vande Bharat Express: Executive Chair Car (Delhi - Varanasi)', description: 'Superfast train ticket with complimentary hot breakfast and panoramic windows.', totalQuantity: 40, availableQuantity: 40, price: 1750.00, originalPrice: 3400.00, category: 'travel', imageUrl: 'train' },
+        { id: 3, name: 'Sunburn Goa 2026: VIP Arena 3-Day Pass', description: 'All-access VIP pass with lounge access and festival merchandise kit.', totalQuantity: 30, availableQuantity: 30, price: 4499.00, originalPrice: 9999.00, category: 'travel', imageUrl: 'ticket' },
+        { id: 4, name: 'Ultrahuman Ring AIR - Raw Titanium Smart Ring', description: 'Sleep, HRV, skin temperature, and recovery tracking titanium ring.', totalQuantity: 15, availableQuantity: 15, price: 14999.00, originalPrice: 28499.00, category: 'wearables', imageUrl: 'ring' },
+        { id: 5, name: 'Titan Smart Pro 2 AMOLED Smartwatch', description: '1.43" AMOLED display, sapphire crystal glass, 14-day battery life.', totalQuantity: 50, availableQuantity: 50, price: 3999.00, originalPrice: 8995.00, category: 'wearables', imageUrl: 'smartwatch' },
+        { id: 6, name: 'Noise ColorFit Ultra 3 Smartwatch', description: 'Metallic finish, Bluetooth calling, 100+ sports modes with 2-year warranty.', totalQuantity: 60, availableQuantity: 60, price: 1999.00, originalPrice: 4999.00, category: 'wearables', imageUrl: 'smartwatch' },
+        { id: 7, name: 'Sony PlayStation 5 Digital Edition Flash Drop', description: '1TB Custom SSD, Ray Tracing, 4K Gaming with DualSense Wireless Controller.', totalQuantity: 10, availableQuantity: 10, price: 39990.00, originalPrice: 44990.00, category: 'electronics', imageUrl: 'console' }
+    ];
+    renderStorefront();
+}
+
+// ---------- 4. Customer store ----------
+function renderStorefront() {
+    renderSpotlightItem();
+    renderProductsGrid();
+}
+
+// big featured deal on top
+function renderSpotlightItem() {
+    const item = products.find(product => product.id === selectedProductId) || products[0];
+    if (!item) return;
+
+    selectedProductId = item.id;
+
+    document.getElementById('spotlight-title').textContent = item.name;
+    document.getElementById('spotlight-desc').textContent = item.description;
+    document.getElementById('spotlight-price').textContent = `₹${formatRupees(item.price)}`;
+    document.getElementById('spotlight-original-price').textContent = `₹${formatRupees(item.originalPrice || item.price * 1.8)}`;
+    document.getElementById('spotlight-qty-left').textContent = item.availableQuantity;
+    document.getElementById('spotlight-qty-total').textContent = item.totalQuantity;
+
+    const discount = Math.round(((item.originalPrice - item.price) / item.originalPrice) * 100);
+    document.getElementById('spotlight-discount-badge').textContent = `-${discount > 0 ? discount : 45}% OFF`;
+
+    document.getElementById('spotlight-category-tag').textContent = item.category === 'travel' ? 'Travel Ticket' : (item.category === 'wearables' ? 'Wearable' : 'Electronics');
+    document.getElementById('spotlight-emoji').textContent = categoryIcons[item.imageUrl] || categoryIcons[item.category] || '⚡';
+
+    const percent = item.totalQuantity > 0 ? Math.round((item.availableQuantity / item.totalQuantity) * 100) : 0;
+    document.getElementById('spotlight-progress-bar').style.width = `${percent}%`;
+
+    const buyButton = document.getElementById('btn-spotlight-buy');
+    const buyText = document.getElementById('btn-spotlight-text');
+    const stockBadge = document.getElementById('spotlight-stock-badge');
+
+    if (item.availableQuantity <= 0) {
+        stockBadge.textContent = 'Sold Out';
+        stockBadge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-100 text-rose-800';
+        buyButton.disabled = true;
+        buyButton.className = 'w-full sm:w-auto px-6 py-3 bg-stone-300 text-stone-500 font-bold rounded-xl text-sm cursor-not-allowed';
+        buyText.textContent = 'Sold Out';
+    } else {
+        stockBadge.textContent = percent < 20 ? 'Selling Fast' : 'In Stock';
+        stockBadge.className = percent < 20
+            ? 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800'
+            : 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800';
+        buyButton.disabled = false;
+        buyButton.className = 'w-full sm:w-auto px-6 py-3 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-xl text-sm transition shadow-sm flex items-center justify-center space-x-2';
+        buyText.textContent = `Book Ticket (₹${formatRupees(item.price)})`;
+    }
+}
+
+// grid of all products
+function renderProductsGrid() {
+    const grid = document.getElementById('products-grid');
+    if (!grid) return;
+
+    let list = products;
+    if (currentCategory !== 'all') {
+        list = products.filter(product => product.category === currentCategory);
+    }
+
+    document.getElementById('items-count-badge').textContent = `${list.length} Items`;
+
+    if (list.length === 0) {
+        grid.innerHTML = '<div class="col-span-full py-12 text-center text-stone-400 text-sm">No items found in this category.</div>';
         return;
     }
 
-    try {
-        const res = await fetch('/api/products');
-        if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data) && data.length > 0) {
-                state.products = data;
-                renderProducts();
-            }
-        }
-    } catch (e) {
-        if (!isSilent) console.error('Fetch products error:', e);
-    }
-}
-
-function renderProducts() {
-    // 1. Update dropdowns in Storefront and War Room
-    const storeSelect = document.getElementById('store-product-select');
-    const simSelect = document.getElementById('sim-product-select');
-
-    if (storeSelect) {
-        const currVal = storeSelect.value || state.selectedProductId;
-        storeSelect.innerHTML = state.products.map(p => 
-            `<option value="${p.id}" ${p.id == currVal ? 'selected' : ''}>${p.name} ($${p.price.toFixed(2)})</option>`
-        ).join('');
-    }
-
-    if (simSelect) {
-        const currVal = simSelect.value || state.selectedProductId;
-        simSelect.innerHTML = state.products.map(p => 
-            `<option value="${p.id}" ${p.id == currVal ? 'selected' : ''}>${p.name} (${p.availableQuantity}/${p.totalQuantity} left)</option>`
-        ).join('');
-    }
-
-    // 2. Update current selected product display in Storefront
-    updateStorefrontDisplay();
-
-    // 3. Update Product Catalog Grid
-    renderProductCatalogGrid();
-}
-
-function onSelectProductChange(id) {
-    playClickSound();
-    state.selectedProductId = parseInt(id, 10);
-    const simSelect = document.getElementById('sim-product-select');
-    if (simSelect) simSelect.value = state.selectedProductId;
-    updateStorefrontDisplay();
-}
-
-function updateStorefrontDisplay() {
-    const prod = state.products.find(p => p.id === state.selectedProductId) || state.products[0];
-    if (!prod) return;
-
-    state.selectedProductId = prod.id;
-
-    const title = document.getElementById('store-product-title');
-    const desc = document.getElementById('store-product-desc');
-    const price = document.getElementById('store-product-price');
-    const origPrice = document.getElementById('store-product-original');
-    const availQty = document.getElementById('store-available-qty');
-    const totalQty = document.getElementById('store-total-qty');
-    const progress = document.getElementById('store-stock-progress');
-    const stockPct = document.getElementById('store-stock-pct');
-    const stockTag = document.getElementById('store-stock-tag');
-    const buyBtn = document.getElementById('btn-buy-now');
-    const buyText = document.getElementById('btn-buy-text');
-    const artEmoji = document.getElementById('product-art-emoji');
-    const artCategory = document.getElementById('product-art-category');
-
-    if (title) title.textContent = prod.name;
-    if (desc) desc.textContent = prod.description;
-    if (price) price.textContent = `$${prod.price.toFixed(2)}`;
-    if (origPrice) origPrice.textContent = `$${(prod.price * 1.6).toFixed(2)}`;
-    if (availQty) availQty.textContent = prod.availableQuantity;
-    if (totalQty) totalQty.textContent = prod.totalQuantity;
-
-    const pct = prod.totalQuantity > 0 ? Math.max(0, Math.min(100, Math.round((prod.availableQuantity / prod.totalQuantity) * 100))) : 0;
-    if (progress) {
-        progress.style.width = `${pct}%`;
-        if (pct > 40) {
-            progress.className = 'h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all duration-500 shadow-sm shadow-cyan-500/50';
-        } else if (pct > 15) {
-            progress.className = 'h-full rounded-full bg-gradient-to-r from-amber-500 to-orange-400 transition-all duration-500 shadow-sm shadow-amber-500/50';
-        } else {
-            progress.className = 'h-full rounded-full bg-gradient-to-r from-rose-600 to-rose-400 transition-all duration-500 shadow-sm shadow-rose-500/50 animate-pulse';
-        }
-    }
-
-    if (stockPct) stockPct.textContent = `${pct}% In Stock (${prod.availableQuantity} Left)`;
-
-    if (artEmoji) {
-        artEmoji.textContent = PRODUCT_EMOJIS[prod.imageUrl] || PRODUCT_EMOJIS.tech;
-    }
-    if (artCategory) {
-        artCategory.textContent = prod.imageUrl ? prod.imageUrl.toUpperCase() + ' DROP' : 'LIMITED EDITION';
-    }
-
-    // Sold out vs Available states
-    if (prod.availableQuantity <= 0 || prod.status === 'SOLD OUT') {
-        if (stockTag) {
-            stockTag.textContent = 'SOLD OUT';
-            stockTag.className = 'px-3 py-1 rounded-full text-xs font-mono font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30';
-        }
-        if (buyBtn) {
-            buyBtn.disabled = true;
-            buyBtn.className = 'w-full py-4 px-6 rounded-xl font-display font-bold text-base uppercase tracking-wider text-slate-500 bg-slate-800 border border-white/5 cursor-not-allowed flex items-center justify-center space-x-2';
-        }
-        if (buyText) buyText.textContent = 'SOLD OUT (ALL UNITS CLAIMED)';
-    } else {
-        if (stockTag) {
-            stockTag.textContent = pct < 20 ? 'ALMOST GONE' : 'IN STOCK';
-            stockTag.className = pct < 20 
-                ? 'px-3 py-1 rounded-full text-xs font-mono font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                : 'px-3 py-1 rounded-full text-xs font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
-        }
-        if (buyBtn) {
-            buyBtn.disabled = false;
-            buyBtn.className = 'w-full py-4 px-6 rounded-xl font-display font-bold text-base uppercase tracking-wider text-black bg-gradient-to-r from-cyan-400 via-teal-300 to-emerald-400 hover:from-cyan-300 hover:to-emerald-300 transition-all duration-200 shadow-lg shadow-cyan-500/25 active:scale-[0.98] flex items-center justify-center space-x-2';
-        }
-        if (buyText) buyText.textContent = 'BUY NOW (INSTANT 1-CLICK CLAIM)';
-    }
-}
-
-function renderProductCatalogGrid() {
-    const grid = document.getElementById('products-catalog-grid');
-    if (!grid) return;
-
-    grid.innerHTML = state.products.map(p => {
-        const pct = p.totalQuantity > 0 ? Math.round((p.availableQuantity / p.totalQuantity) * 100) : 0;
-        const emoji = PRODUCT_EMOJIS[p.imageUrl] || PRODUCT_EMOJIS.tech;
-        const isSoldOut = p.availableQuantity <= 0;
+    grid.innerHTML = list.map(item => {
+        const icon = categoryIcons[item.imageUrl] || categoryIcons[item.category] || '⚡';
+        const isSoldOut = item.availableQuantity <= 0;
+        const percent = item.totalQuantity > 0 ? Math.round((item.availableQuantity / item.totalQuantity) * 100) : 0;
 
         return `
-        <div class="bg-slate-900/60 rounded-2xl border border-white/10 p-5 flex flex-col justify-between backdrop-blur-md hover:border-cyan-500/30 transition-all duration-200 group">
+        <div class="product-card bg-white border border-stone-200 rounded-2xl p-5 flex flex-col justify-between shadow-xs">
             <div>
                 <div class="flex items-center justify-between mb-3">
-                    <span class="text-3xl p-2 rounded-xl bg-slate-950/80 border border-white/5">${emoji}</span>
-                    <span class="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${isSoldOut ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}">
-                        ${p.status}
+                    <span class="text-3xl p-2 bg-stone-50 rounded-xl border border-stone-100">${icon}</span>
+                    <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full ${isSoldOut ? 'bg-rose-100 text-rose-700' : 'bg-orange-100 text-orange-700'}">
+                        ${isSoldOut ? 'Sold Out' : `${item.availableQuantity} Left`}
                     </span>
                 </div>
-                <h3 class="font-display font-bold text-lg text-white group-hover:text-cyan-400 transition">${escapeHtml(p.name)}</h3>
-                <p class="text-xs text-slate-400 mt-1 line-clamp-2">${escapeHtml(p.description)}</p>
-                
+                <h4 class="font-bold text-stone-900 text-base line-clamp-1">${escapeHtml(item.name)}</h4>
+                <p class="text-xs text-stone-500 mt-1 line-clamp-2 leading-relaxed">${escapeHtml(item.description)}</p>
+
                 <div class="mt-4 flex items-baseline justify-between">
-                    <span class="text-xl font-mono font-bold text-white">$${p.price.toFixed(2)}</span>
-                    <span class="text-xs font-mono text-slate-400">${p.availableQuantity} / ${p.totalQuantity} Units</span>
+                    <div>
+                        <span class="text-xl font-extrabold text-orange-600">₹${formatRupees(item.price)}</span>
+                        <span class="text-xs text-stone-400 line-through ml-1">₹${formatRupees(item.originalPrice)}</span>
+                    </div>
+                    <span class="text-xs text-stone-500">${item.availableQuantity}/${item.totalQuantity} Units</span>
                 </div>
 
-                <div class="w-full h-2 bg-slate-950 rounded-full overflow-hidden mt-2 border border-white/5">
-                    <div class="h-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all" style="width: ${pct}%"></div>
+                <!-- Stock Bar -->
+                <div class="w-full h-2 bg-stone-100 rounded-full overflow-hidden mt-2 border border-stone-200">
+                    <div class="h-full bg-orange-500 rounded-full" style="width: ${percent}%;"></div>
                 </div>
             </div>
 
-            <div class="mt-6 pt-4 border-t border-white/5 flex items-center justify-between gap-2">
-                <button onclick="selectProductForDrop(${p.id})" class="flex-1 py-2 px-3 rounded-lg text-xs font-mono font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 transition text-center">
-                    View Drop
+            <div class="mt-5 pt-3 border-t border-stone-100 flex items-center space-x-2">
+                <button onclick="selectSpotlightItem(${item.id})" class="flex-1 py-2 text-xs font-semibold bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl transition">
+                    View
                 </button>
-                <button onclick="resetProductInventory(${p.id}, ${p.totalQuantity})" class="py-2 px-3 rounded-lg text-xs font-mono font-semibold bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/20 transition flex items-center space-x-1">
-                    <span>🔄</span>
-                    <span>Restock</span>
+                <button onclick="buyProductById(${item.id})" ${isSoldOut ? 'disabled' : ''} class="px-4 py-2 text-xs font-bold ${isSoldOut ? 'bg-stone-200 text-stone-400 cursor-not-allowed' : 'bg-orange-600 hover:bg-orange-700 text-white shadow-sm'} rounded-xl transition">
+                    ${isSoldOut ? 'Sold Out' : 'Buy Now'}
                 </button>
             </div>
         </div>
@@ -399,760 +243,675 @@ function renderProductCatalogGrid() {
     }).join('');
 }
 
-function selectProductForDrop(id) {
-    state.selectedProductId = id;
-    switchTab('store');
-    updateStorefrontDisplay();
+function selectSpotlightItem(id) {
+    selectedProductId = id;
+    renderSpotlightItem();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-// ==========================================
-// Purchase Handling (Customer View)
-// ==========================================
-async function triggerSinglePurchase() {
-    playClickSound();
-    const btn = document.getElementById('btn-buy-now');
-    const btnText = document.getElementById('btn-buy-text');
-    const prod = state.products.find(p => p.id === state.selectedProductId);
+function setCategory(category) {
+    currentCategory = category;
 
-    if (!prod || prod.availableQuantity <= 0) {
-        playFailThud();
-        showToast('Item is already sold out!', 'error');
-        return;
-    }
-
-    if (btn) btn.disabled = true;
-    if (btnText) btnText.innerHTML = '<span class="animate-spin inline-block mr-2">⚙️</span> Securing Lock...';
-
-    const userId = state.currentUser.id;
-    const start = performance.now();
-
-    if (state.isLiveBackend) {
-        try {
-            const res = await fetch('/api/purchase', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userId, productId: prod.id })
-            });
-            const data = await res.json();
-            const latency = Math.round(performance.now() - start);
-
-            if (data.success) {
-                handlePurchaseSuccess(prod, userId, data.remaining, data.latencyMs || latency);
-            } else {
-                handlePurchaseFailed(data.message || 'Transaction could not be completed.');
-            }
-        } catch (e) {
-            handlePurchaseFailed('Network error communicating with JVM engine.');
-        }
-    } else {
-        // Client offline simulation
-        await new Promise(r => setTimeout(r, 60)); // Simulate microsecond network trip
-        if (prod.availableQuantity > 0) {
-            prod.availableQuantity--;
-            if (prod.availableQuantity === 0) prod.status = 'SOLD OUT';
-            const latency = Math.round(performance.now() - start);
-            handlePurchaseSuccess(prod, userId, prod.availableQuantity, latency);
+    ['all', 'travel', 'wearables', 'electronics'].forEach(name => {
+        const button = document.getElementById(`pill-${name}`);
+        if (!button) return;
+        if (name === category) {
+            button.className = 'cat-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-orange-600 shadow-sm';
         } else {
-            handlePurchaseFailed('Item sold out.');
-        }
-    }
-
-    if (btn) btn.disabled = false;
-    updateStorefrontDisplay();
-}
-
-function handlePurchaseSuccess(prod, userId, remaining, latency) {
-    playSuccessChime();
-    fireConfetti();
-
-    // Log purchase
-    const newRecord = {
-        purchaseId: Math.floor(1000 + Math.random() * 9000),
-        userId: userId,
-        productId: prod.id,
-        productName: prod.name,
-        status: 'SUCCESS',
-        purchaseTime: new Date().toLocaleTimeString(),
-        latencyMs: latency
-    };
-    state.purchases.unshift(newRecord);
-
-    // Refresh UI
-    updateStorefrontDisplay();
-    renderLedgerTable();
-    addLiveClaimFeedEntry(newRecord);
-
-    // Show Confirmation Modal
-    openTicketModal(newRecord, remaining);
-    randomizeUser(); // Switch user for next buy so user can test multiple consecutive purchases easily
-}
-
-function handlePurchaseFailed(msg) {
-    playFailThud();
-    showToast(msg, 'error');
-    const buyBtn = document.getElementById('btn-buy-now');
-    if (buyBtn) {
-        buyBtn.classList.add('animate-shake');
-        setTimeout(() => buyBtn.classList.remove('animate-shake'), 500);
-    }
-}
-
-function addLiveClaimFeedEntry(rec) {
-    const feed = document.getElementById('live-claim-feed');
-    const countBadge = document.getElementById('live-claim-count');
-    if (!feed) return;
-
-    if (countBadge) {
-        countBadge.textContent = `${state.purchases.length} Claims`;
-    }
-
-    const item = document.createElement('div');
-    item.className = 'p-2 rounded-xl bg-slate-950/80 border border-white/5 flex items-center justify-between text-xs font-mono animate-fade-in';
-    item.innerHTML = `
-        <div class="flex items-center space-x-2">
-            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-            <span class="text-white font-medium">User #${rec.userId}</span>
-            <span class="text-slate-500">claimed</span>
-            <span class="text-cyan-400 truncate max-w-[120px]">${escapeHtml(rec.productName)}</span>
-        </div>
-        <span class="text-[10px] text-slate-500">${rec.latencyMs}ms</span>
-    `;
-
-    if (feed.children.length === 1 && feed.children[0].textContent.includes('Ready for orders')) {
-        feed.innerHTML = '';
-    }
-
-    feed.prepend(item);
-    if (feed.children.length > 20) {
-        feed.removeChild(feed.lastChild);
-    }
-}
-
-// ==========================================
-// War Room: Concurrency Stress Tester
-// ==========================================
-function updateThreadSlider(val) {
-    state.simThreadCount = parseInt(val, 10);
-    const display = document.getElementById('sim-thread-count-display');
-    if (display) display.textContent = `${state.simThreadCount} Threads`;
-}
-
-function setThreadPreset(count) {
-    playClickSound();
-    const slider = document.getElementById('sim-thread-slider');
-    if (slider) slider.value = count;
-    updateThreadSlider(count);
-}
-
-async function launchSimulation() {
-    if (state.simRunning) return;
-    playLaunchSound();
-
-    const simSelect = document.getElementById('sim-product-select');
-    const targetProdId = parseInt(simSelect ? simSelect.value : state.selectedProductId, 10);
-    const prod = state.products.find(p => p.id === targetProdId) || state.products[0];
-    const threadCount = state.simThreadCount;
-    const mode = document.querySelector('input[name="sim_mode"]:checked')?.value || 'safe';
-
-    state.simRunning = true;
-    const btn = document.getElementById('btn-run-simulation');
-    const btnText = document.getElementById('btn-sim-text');
-
-    if (btn) btn.disabled = true;
-    if (btnText) btnText.innerHTML = '<span class="animate-spin inline-block mr-2">⚡</span> BLASTING THREADS...';
-
-    // Reset thread matrix view
-    renderThreadMatrix(threadCount);
-
-    const initialStock = prod.availableQuantity;
-    const totalTickets = prod.totalQuantity;
-
-    if (state.isLiveBackend && mode === 'safe') {
-        // Real multithreaded simulation in Java JVM!
-        try {
-            const startReq = performance.now();
-            const res = await fetch('/api/simulate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    productId: prod.id,
-                    userCount: threadCount,
-                    startUserId: Math.floor(100 + Math.random() * 8000)
-                })
-            });
-
-            const data = await res.json();
-            const clientTripTime = Math.round(performance.now() - startReq);
-
-            // Animate thread results
-            animateThreadResults(data.userResults || []);
-
-            // Update Telemetry Display
-            updateTelemetryDisplay(data.executionTimeMs, data.tps, data.successful, data.failed);
-
-            // Audit Consistency
-            updateAuditVerifier(initialStock, data.successful, data.finalRemaining, totalTickets, true);
-
-            // Update Chart
-            updateOutcomeChart(data.successful, data.failed);
-            updateLatencyChart(data.userResults || []);
-
-            // Refresh products
-            await fetchProducts(true);
-            await fetchPurchases(true);
-
-            showToast(`Simulation complete: ${data.successful} Won, ${data.failed} Sold Out`, 'success');
-
-        } catch (e) {
-            showToast('Error during JVM simulation.', 'error');
-        }
-    } else {
-        // Client-side simulation (Supports both safe mode and race condition demo!)
-        await executeClientSideSimulation(prod, threadCount, mode);
-    }
-
-    state.simRunning = false;
-    if (btn) btn.disabled = false;
-    if (btnText) btnText.textContent = 'LAUNCH FLASH ATTACK';
-}
-
-function renderThreadMatrix(count) {
-    const container = document.getElementById('thread-matrix');
-    if (!container) return;
-    container.innerHTML = '';
-
-    const nodesToShow = Math.min(count, 120);
-    for (let i = 0; i < nodesToShow; i++) {
-        const node = document.createElement('div');
-        node.id = `thread-node-${i}`;
-        node.className = 'thread-node state-running';
-        node.setAttribute('data-tooltip', `Thread #${i + 1}: In Flight`);
-        container.appendChild(node);
-    }
-}
-
-function animateThreadResults(results) {
-    results.forEach((r, idx) => {
-        const node = document.getElementById(`thread-node-${idx}`);
-        if (node) {
-            node.className = `thread-node ${r.success ? 'state-success' : 'state-failed'}`;
-            node.setAttribute('data-tooltip', `User #${r.userId}: ${r.success ? 'CLAIMED' : 'SOLD OUT'} (${r.latencyMs}ms)`);
+            button.className = 'cat-btn px-3 py-1.5 text-xs font-semibold rounded-lg text-stone-600 hover:text-stone-900';
         }
     });
+
+    renderProductsGrid();
 }
 
-async function executeClientSideSimulation(prod, threadCount, mode) {
-    const startTime = performance.now();
-    const results = [];
-    let initialStock = prod.availableQuantity;
-    let successful = 0;
-    let failed = 0;
-
-    if (mode === 'race') {
-        // Intentional race condition bug simulation!
-        // When unprotected, multiple threads read the same stock before it decrements!
-        const oversellFactor = Math.floor(Math.random() * 8) + 3; // Intentionally overbooks!
-        const maxCanClaim = Math.min(threadCount, initialStock + oversellFactor);
-
-        for (let i = 0; i < threadCount; i++) {
-            const won = i < maxCanClaim;
-            const latency = Math.floor(Math.random() * 18) + 2;
-            if (won) successful++; else failed++;
-            results.push({ userId: 1000 + i, success: won, latencyMs: latency });
-        }
-        prod.availableQuantity = Math.max(-oversellFactor, initialStock - successful);
-    } else {
-        // Safe Mutex client simulation
-        for (let i = 0; i < threadCount; i++) {
-            const latency = Math.floor(Math.random() * 25) + 3;
-            if (prod.availableQuantity > 0) {
-                prod.availableQuantity--;
-                successful++;
-                results.push({ userId: 1000 + i, success: true, latencyMs: latency });
-            } else {
-                failed++;
-                results.push({ userId: 1000 + i, success: false, latencyMs: latency });
-            }
-        }
-        if (prod.availableQuantity === 0) prod.status = 'SOLD OUT';
-    }
-
-    const executionTime = Math.max(1, Math.round(performance.now() - startTime + (threadCount * 0.1)));
-    const tps = ((successful + failed) / (executionTime / 1000)).toFixed(2);
-
-    animateThreadResults(results);
-    updateTelemetryDisplay(executionTime, tps, successful, failed);
-
-    const isConsistent = mode === 'safe' && (successful <= initialStock) && (prod.availableQuantity >= 0);
-    updateAuditVerifier(initialStock, successful, prod.availableQuantity, prod.totalQuantity, isConsistent);
-
-    updateOutcomeChart(successful, failed);
-    updateLatencyChart(results);
-    updateStorefrontDisplay();
-    renderProductCatalogGrid();
-
-    if (isConsistent) {
-        showToast(`Simulation completed: 0 Oversell. ACID Conserved.`, 'success');
-    } else {
-        playFailThud();
-        showToast(`Race Condition Detected! Inventory oversold by ${Math.abs(prod.availableQuantity)} tickets!`, 'error');
-    }
+// switch to next user (to test many buyers)
+function changeRandomUser() {
+    const nextIndex = (studentUsers.indexOf(activeUser) + 1) % studentUsers.length;
+    activeUser = studentUsers[nextIndex];
+    updateUserDisplay();
+    showToast(`Switched user to: ${activeUser.name}`, 'info');
 }
 
-function updateTelemetryDisplay(timeMs, tps, success, failed) {
-    const timeEl = document.getElementById('telemetry-time');
-    const tpsEl = document.getElementById('telemetry-tps');
-    const successEl = document.getElementById('telemetry-success');
-    const failedEl = document.getElementById('telemetry-failed');
-
-    if (timeEl) timeEl.textContent = `${timeMs} ms`;
-    if (tpsEl) tpsEl.textContent = `${tps} TPS`;
-    if (successEl) successEl.textContent = success;
-    if (failedEl) failedEl.textContent = failed;
+function updateUserDisplay() {
+    const userText = document.getElementById('current-user-name');
+    if (userText) userText.textContent = `User #${activeUser.id} (${activeUser.name})`;
 }
 
-function updateAuditVerifier(initial, success, remaining, total, isConsistent) {
-    const banner = document.getElementById('audit-banner');
-    const icon = document.getElementById('audit-icon');
-    const title = document.getElementById('audit-title');
-    const subtitle = document.getElementById('audit-subtitle');
-    const badge = document.getElementById('audit-badge');
-
-    if (!banner) return;
-
-    if (isConsistent) {
-        banner.className = 'p-5 rounded-2xl border border-emerald-500/40 bg-emerald-950/30 backdrop-blur-md flex flex-col sm:flex-row items-center justify-between gap-4 shadow-lg shadow-emerald-500/10';
-        if (icon) icon.innerHTML = '🛡️';
-        if (title) title.innerHTML = '<span class="text-emerald-400 font-bold">100% ACID CONSISTENT (0 OVERSELLING)</span>';
-        if (subtitle) subtitle.innerHTML = `Audit Pass: Initial (${initial}) = Sold (${success}) + Remaining (${remaining}). Zero race conditions.`;
-        if (badge) {
-            badge.className = 'px-3 py-1 rounded-full text-xs font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
-            badge.textContent = 'CONSISTENT';
-        }
-    } else {
-        banner.className = 'p-5 rounded-2xl border border-rose-500/40 bg-rose-950/30 backdrop-blur-md flex flex-col sm:flex-row items-center justify-between gap-4 shadow-lg shadow-rose-500/10 animate-pulse';
-        if (icon) icon.innerHTML = '⚠️';
-        if (title) title.innerHTML = '<span class="text-rose-400 font-bold">RACE CONDITION DETECTED! (OVERBOOKED)</span>';
-        if (subtitle) subtitle.innerHTML = `Audit Failure: Oversold beyond stock! Inventory is negative (${remaining}). Mutex lock was bypassed!`;
-        if (badge) {
-            badge.className = 'px-3 py-1 rounded-full text-xs font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40';
-            badge.textContent = 'INCONSISTENT';
-        }
-    }
+// ---------- 5. Buying ----------
+async function buySpotlightProduct() {
+    await buyProductById(selectedProductId);
 }
 
-// ==========================================
-// Chart.js Visualizations
-// ==========================================
-function initCharts() {
-    const outcomeCanvas = document.getElementById('outcome-chart');
-    const latencyCanvas = document.getElementById('latency-chart');
-
-    if (outcomeCanvas && window.Chart) {
-        state.charts.outcome = new Chart(outcomeCanvas, {
-            type: 'doughnut',
-            data: {
-                labels: ['Successful Claims', 'Sold Out / Rejected'],
-                datasets: [{
-                    data: [50, 50],
-                    backgroundColor: ['#10b981', '#f43f5e'],
-                    borderColor: '#0f172a',
-                    borderWidth: 3
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: { color: '#94a3b8', font: { family: 'Inter', size: 11 } }
-                    }
-                },
-                cutout: '70%'
-            }
-        });
-    }
-
-    if (latencyCanvas && window.Chart) {
-        state.charts.latency = new Chart(latencyCanvas, {
-            type: 'bar',
-            data: {
-                labels: Array.from({ length: 20 }, (_, i) => `T-${i + 1}`),
-                datasets: [{
-                    label: 'Latency (ms)',
-                    data: Array.from({ length: 20 }, () => Math.floor(Math.random() * 20) + 5),
-                    backgroundColor: '#06b6d4',
-                    borderRadius: 4
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    x: { ticks: { color: '#64748b', font: { size: 9 } }, grid: { display: false } },
-                    y: { ticks: { color: '#64748b', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } }
-                },
-                plugins: {
-                    legend: { display: false }
-                }
-            }
-        });
-    }
-}
-
-function updateOutcomeChart(success, failed) {
-    if (state.charts.outcome) {
-        state.charts.outcome.data.datasets[0].data = [success, failed];
-        state.charts.outcome.update();
-    }
-}
-
-function updateLatencyChart(userResults) {
-    if (state.charts.latency && userResults.length > 0) {
-        const sample = userResults.slice(0, 24);
-        state.charts.latency.data.labels = sample.map((_, i) => `#${i + 1}`);
-        state.charts.latency.data.datasets[0].data = sample.map(r => r.latencyMs);
-        state.charts.latency.data.datasets[0].backgroundColor = sample.map(r => r.success ? '#10b981' : '#f43f5e');
-        state.charts.latency.update();
-    }
-}
-
-// ==========================================
-// Ledger & History
-// ==========================================
-async function fetchPurchases(isSilent = false) {
-    if (!state.isLiveBackend) return;
-    try {
-        const res = await fetch('/api/purchases');
-        if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data)) {
-                state.purchases = data;
-                renderLedgerTable();
-            }
-        }
-    } catch (e) {
-        if (!isSilent) console.error('Error fetching purchases:', e);
-    }
-}
-
-function renderLedgerTable() {
-    const tbody = document.getElementById('ledger-table-body');
-    const totalCount = document.getElementById('ledger-total-count');
-    const totalVolume = document.getElementById('ledger-total-volume');
-    const avgLatency = document.getElementById('ledger-avg-latency');
-
-    if (totalCount) totalCount.textContent = state.purchases.length;
-
-    // Calculate total gross volume
-    let gross = 0;
-    let totalLat = 0;
-    state.purchases.forEach(p => {
-        const prod = state.products.find(pr => pr.id === p.productId);
-        if (prod) gross += prod.price;
-        totalLat += (p.latencyMs || 0);
-    });
-
-    if (totalVolume) totalVolume.textContent = `$${gross.toFixed(2)}`;
-    if (avgLatency) {
-        const avg = state.purchases.length > 0 ? (totalLat / state.purchases.length).toFixed(1) : 0;
-        avgLatency.textContent = `${avg} ms`;
-    }
-
-    if (!tbody) return;
-
-    if (state.purchases.length === 0) {
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="6" class="py-8 text-center text-slate-500 font-mono">
-                    No transactions recorded yet. Make a purchase or run a simulation.
-                </td>
-            </tr>
-        `;
+async function buyProductById(id) {
+    const item = products.find(product => product.id === id);
+    if (!item || item.availableQuantity <= 0) {
+        showToast('Sorry! This item is already sold out.', 'error');
         return;
     }
 
-    tbody.innerHTML = state.purchases.slice(0, 50).map(p => `
-        <tr class="hover:bg-white/5 transition-colors">
-            <td class="py-3 px-4 font-bold text-white">#PUR-${p.purchaseId}</td>
-            <td class="py-3 px-4 text-cyan-400">User #${p.userId}</td>
-            <td class="py-3 px-4 text-slate-200">${escapeHtml(p.productName || 'Flash Drop')}</td>
+    const buyButton = document.getElementById('btn-spotlight-buy');
+    if (buyButton) buyButton.disabled = true;
+
+    // backend does: WorkerPool -> WAL (log) -> Database
+    try {
+        const response = await fetch('/api/purchase', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: activeUser.id, productId: item.id })
+        });
+        const result = await response.json();
+
+        if (result.success) {
+            triggerConfetti();
+
+            const newOrder = {
+                purchaseId: Math.floor(1000 + Math.random() * 9000),
+                userId: activeUser.id,
+                productId: item.id,
+                productName: item.name,
+                price: item.price,
+                status: 'SUCCESS',
+                purchaseTime: new Date().toLocaleTimeString(),
+                workerName: result.workerName || 'FlashWorker-1'
+            };
+            orders.unshift(newOrder);
+
+            item.availableQuantity = result.remaining;
+            if (item.availableQuantity <= 0) item.status = 'SOLD OUT';
+
+            showReceiptModal(newOrder, result.remaining, result.workerName);
+            renderStorefront();
+        } else {
+            showToast(result.message || 'Ticket could not be booked.', 'error');
+        }
+    } catch (error) {
+        // server is off, book it locally
+        item.availableQuantity--;
+        const offlineOrder = {
+            purchaseId: Math.floor(1000 + Math.random() * 9000),
+            userId: activeUser.id,
+            productId: item.id,
+            productName: item.name,
+            price: item.price,
+            status: 'SUCCESS',
+            purchaseTime: new Date().toLocaleTimeString(),
+            workerName: 'FlashWorker-Local'
+        };
+        orders.unshift(offlineOrder);
+        triggerConfetti();
+        showReceiptModal(offlineOrder, item.availableQuantity, 'FlashWorker-Local');
+        renderStorefront();
+    }
+
+    if (buyButton) buyButton.disabled = false;
+}
+
+function showReceiptModal(order, remaining, workerName) {
+    document.getElementById('receipt-id').textContent = `#ORD-${order.purchaseId}`;
+    document.getElementById('receipt-name').textContent = order.productName;
+    document.getElementById('receipt-user').textContent = `User #${order.userId} (${activeUser.name})`;
+    document.getElementById('receipt-amount').textContent = `₹${formatRupees(order.price)}`;
+    document.getElementById('receipt-remaining').textContent = `${remaining} Units Left`;
+    document.getElementById('receipt-worker').textContent = `${workerName || 'WorkerPool'} (WAL Logged)`;
+
+    document.getElementById('modal-receipt')?.classList.remove('hidden');
+}
+
+function closeReceiptModal() {
+    document.getElementById('modal-receipt')?.classList.add('hidden');
+}
+
+// ---------- 6. Admin panel ----------
+function handleAdminButtonClick() {
+    if (isAdminLoggedIn) {
+        showAdminPanel();
+    } else {
+        openAdminModal();
+    }
+}
+
+function openAdminModal() {
+    document.getElementById('modal-admin-login')?.classList.remove('hidden');
+    const pinInput = document.getElementById('input-pin');
+    if (pinInput) {
+        pinInput.value = '';
+        setTimeout(() => pinInput.focus(), 100);
+    }
+}
+
+function closeAdminModal() {
+    document.getElementById('modal-admin-login')?.classList.add('hidden');
+}
+
+async function verifyAdminPin(event) {
+    event.preventDefault();
+    const pin = document.getElementById('input-pin')?.value.trim();
+
+    try {
+        const response = await fetch('/api/admin/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pin })
+        });
+        const data = await response.json();
+        if (data.authenticated) {
+            loginAsAdmin();
+            return;
+        }
+    } catch (error) {
+        if (pin === 'admin123') {
+            loginAsAdmin();
+            return;
+        }
+    }
+
+    showToast('Incorrect PIN! Default is admin123', 'error');
+}
+
+function loginAsAdmin() {
+    isAdminLoggedIn = true;
+    sessionStorage.setItem('admin_logged_in', 'true');
+    closeAdminModal();
+    updateAdminButton();
+    showAdminPanel();
+    showToast('Admin logged in successfully.', 'success');
+}
+
+function logoutAdmin() {
+    isAdminLoggedIn = false;
+    sessionStorage.removeItem('admin_logged_in');
+    updateAdminButton();
+    showCustomerStore();
+    showToast('Logged out of Admin Panel.', 'info');
+}
+
+function updateAdminButton() {
+    const label = document.getElementById('btn-admin-label');
+    if (label) label.textContent = isAdminLoggedIn ? 'Admin Panel' : 'Admin Login';
+}
+
+function showAdminPanel() {
+    document.getElementById('customer-store-section')?.classList.add('hidden');
+    document.getElementById('buyer-nav-pills')?.classList.add('hidden');
+    document.getElementById('mobile-filter-bar')?.classList.add('hidden');
+    document.getElementById('admin-panel-section')?.classList.remove('hidden');
+
+    loadAdminOverview();
+    renderAdminProducts();
+    renderAdminOrders();
+    window.location.hash = '#admin';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function showCustomerStore() {
+    document.getElementById('admin-panel-section')?.classList.add('hidden');
+    document.getElementById('customer-store-section')?.classList.remove('hidden');
+    document.getElementById('buyer-nav-pills')?.classList.remove('hidden');
+    document.getElementById('mobile-filter-bar')?.classList.remove('hidden');
+
+    renderStorefront();
+    if (window.location.hash === '#admin') {
+        window.history.pushState('', document.title, window.location.pathname);
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// switch admin tabs: inventory / orders / algorithms
+function switchAdminTab(tab) {
+    currentAdminTab = tab;
+
+    const sections = {
+        inventory: document.getElementById('admin-panel-inventory'),
+        orders: document.getElementById('admin-panel-orders'),
+        algorithms: document.getElementById('admin-panel-algorithms')
+    };
+    const buttons = {
+        inventory: document.getElementById('tab-btn-inventory'),
+        orders: document.getElementById('tab-btn-orders'),
+        algorithms: document.getElementById('tab-btn-algorithms')
+    };
+
+    const activeClass = 'px-4 py-2 text-xs font-bold rounded-xl bg-orange-600 text-white shadow-sm';
+    const normalClass = 'px-4 py-2 text-xs font-bold rounded-xl text-stone-600 hover:text-stone-900 hover:bg-stone-100';
+
+    // hide everything first
+    for (const name in sections) {
+        sections[name]?.classList.add('hidden');
+        if (buttons[name]) buttons[name].className = normalClass;
+    }
+
+    // show the selected tab
+    sections[tab]?.classList.remove('hidden');
+    if (buttons[tab]) buttons[tab].className = activeClass;
+
+    if (tab === 'inventory') renderAdminProducts();
+    if (tab === 'orders') renderAdminOrders();
+    if (tab === 'algorithms') loadAlgorithmTelemetry();
+}
+
+function renderAdminProducts() {
+    const tableBody = document.getElementById('admin-products-table');
+    if (!tableBody) return;
+
+    tableBody.innerHTML = products.map(product => `
+        <tr class="hover:bg-stone-50 text-xs">
+            <td class="py-3 px-4 font-semibold text-stone-900">${escapeHtml(product.name)}</td>
+            <td class="py-3 px-4 text-stone-600 uppercase text-[11px] font-semibold">${product.category}</td>
+            <td class="py-3 px-4 font-bold text-orange-600">₹${formatRupees(product.price)}</td>
+            <td class="py-3 px-4 text-stone-400 line-through">₹${formatRupees(product.originalPrice)}</td>
+            <td class="py-3 px-4 font-medium">${product.availableQuantity} / ${product.totalQuantity}</td>
             <td class="py-3 px-4">
-                <span class="px-2 py-0.5 rounded text-[10px] font-bold ${p.status === 'SUCCESS' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}">
-                    ${p.status}
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${product.availableQuantity > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">
+                    ${product.availableQuantity > 0 ? 'ACTIVE' : 'SOLD OUT'}
                 </span>
             </td>
-            <td class="py-3 px-4 text-slate-400">${p.purchaseTime}</td>
-            <td class="py-3 px-4 text-right text-purple-400 font-bold">${p.latencyMs || 2}ms</td>
+            <td class="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
+                <button onclick="restockItem(${product.id}, ${product.totalQuantity})" class="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold rounded-lg">Restock</button>
+                <button onclick="deleteItem(${product.id})" class="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold rounded-lg">Delete</button>
+            </td>
         </tr>
     `).join('');
 }
 
-function filterLedgerTable() {
-    const input = document.getElementById('ledger-search-input')?.value.toLowerCase() || '';
-    const rows = document.querySelectorAll('#ledger-table-body tr');
-    rows.forEach(r => {
-        const text = r.textContent.toLowerCase();
-        r.style.display = text.includes(input) ? '' : 'none';
-    });
-}
+function renderAdminOrders() {
+    const tableBody = document.getElementById('admin-orders-table');
+    if (!tableBody) return;
 
-function exportLedgerCSV() {
-    playClickSound();
-    if (state.purchases.length === 0) {
-        showToast('No records to export.', 'info');
+    if (orders.length === 0) {
+        tableBody.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-stone-400 text-xs">No orders recorded yet.</td></tr>';
         return;
     }
 
-    let csv = 'Purchase ID,User ID,Product ID,Product Name,Status,Timestamp,Latency (ms)\n';
-    state.purchases.forEach(p => {
-        csv += `${p.purchaseId},${p.userId},${p.productId},"${(p.productName || '').replace(/"/g, '""')}",${p.status},"${p.purchaseTime}",${p.latencyMs || 0}\n`;
+    tableBody.innerHTML = orders.map(order => `
+        <tr class="hover:bg-stone-50 text-xs">
+            <td class="py-3 px-4 font-bold text-stone-900">#ORD-${order.purchaseId}</td>
+            <td class="py-3 px-4 text-orange-700 font-semibold">User #${order.userId}</td>
+            <td class="py-3 px-4 text-stone-800">${escapeHtml(order.productName)}</td>
+            <td class="py-3 px-4 font-bold text-stone-900">₹${formatRupees(order.price || 0)}</td>
+            <td class="py-3 px-4">
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                    ${order.status || 'SUCCESS'}
+                </span>
+            </td>
+            <td class="py-3 px-4 text-right text-stone-500">${order.purchaseTime}</td>
+        </tr>
+    `).join('');
+}
+
+function searchOrders() {
+    const searchText = document.getElementById('order-search-input')?.value.toLowerCase() || '';
+    const rows = document.querySelectorAll('#admin-orders-table tr');
+    rows.forEach(row => {
+        row.style.display = row.textContent.toLowerCase().includes(searchText) ? '' : 'none';
     });
-
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `flash_sale_audit_${Date.now()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showToast('Audit Ledger downloaded as CSV', 'success');
 }
 
-async function clearPurchases() {
-    playClickSound();
-    if (!confirm('Clear all purchase history?')) return;
-
-    if (state.isLiveBackend) {
-        try {
-            await fetch('/api/clear-purchases', { method: 'POST' });
-        } catch (e) {}
-    }
-    state.purchases = [];
-    renderLedgerTable();
-    showToast('Purchase history cleared', 'info');
+function openAddModal() {
+    document.getElementById('modal-add-item')?.classList.remove('hidden');
 }
 
-// ==========================================
-// Product Restock & Admin
-// ==========================================
-async function quickResetSelectedProduct() {
-    playClickSound();
-    const prod = state.products.find(p => p.id === state.selectedProductId);
-    if (!prod) return;
-    await resetProductInventory(prod.id, prod.totalQuantity);
+function closeAddModal() {
+    document.getElementById('modal-add-item')?.classList.add('hidden');
 }
 
-async function resetProductInventory(productId, quantity) {
-    if (state.isLiveBackend) {
-        try {
-            const res = await fetch('/api/reset', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ productId, quantity })
-            });
-            if (res.ok) {
-                await fetchProducts();
-                await fetchPurchases();
-                showToast(`Inventory restocked to ${quantity} units!`, 'success');
-                return;
-            }
-        } catch (e) {}
-    }
-
-    // Client fallback
-    const p = state.products.find(pr => pr.id === productId);
-    if (p) {
-        p.availableQuantity = quantity;
-        p.status = 'ACTIVE';
-        updateStorefrontDisplay();
-        renderProductCatalogGrid();
-        showToast(`Inventory restocked to ${quantity} units!`, 'success');
+function handleCategoryChange(category) {
+    const nameInput = document.getElementById('new-item-name');
+    if (category === 'travel') {
+        nameInput.placeholder = 'e.g. Goa Flight Ticket or Manali Volvo Pass';
+    } else if (category === 'wearables') {
+        nameInput.placeholder = 'e.g. Titan Smartwatch or Ultrahuman Ring';
+    } else {
+        nameInput.placeholder = 'e.g. Sony PlayStation 5 or Earbuds';
     }
 }
 
-function openAddProductModal() {
-    playClickSound();
-    document.getElementById('modal-add-product')?.classList.remove('hidden');
-}
+async function handleAddNewItem(event) {
+    event.preventDefault();
 
-function closeAddProductModal() {
-    document.getElementById('modal-add-product')?.classList.add('hidden');
-}
+    const name = document.getElementById('new-item-name')?.value.trim();
+    const description = document.getElementById('new-item-desc')?.value.trim();
+    const category = document.getElementById('new-item-category')?.value;
+    const price = parseFloat(document.getElementById('new-item-price')?.value);
+    const originalPrice = parseFloat(document.getElementById('new-item-original')?.value);
+    const quantity = parseInt(document.getElementById('new-item-qty')?.value, 10);
 
-async function handleCreateProductSubmit(e) {
-    e.preventDefault();
-    playClickSound();
+    if (!name || isNaN(price) || isNaN(quantity)) return;
 
-    const name = document.getElementById('new-prod-name')?.value.trim();
-    const desc = document.getElementById('new-prod-desc')?.value.trim();
-    const qty = parseInt(document.getElementById('new-prod-qty')?.value, 10);
-    const price = parseFloat(document.getElementById('new-prod-price')?.value);
+    try {
+        const response = await fetch('/api/admin/products', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, description, price, originalPrice, quantity, category })
+        });
+        if (response.ok) {
+            closeAddModal();
+            await loadProducts();
+            showToast('New item published successfully!', 'success');
+            return;
+        }
+    } catch (error) {}
 
-    if (!name || isNaN(qty) || isNaN(price)) return;
-
-    if (state.isLiveBackend) {
-        try {
-            const res = await fetch('/api/products', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, description: desc, quantity: qty, price })
-            });
-            if (res.ok) {
-                const data = await res.json();
-                closeAddProductModal();
-                await fetchProducts();
-                if (data.productId) state.selectedProductId = data.productId;
-                updateStorefrontDisplay();
-                showToast('New Flash Drop created!', 'success');
-                return;
-            }
-        } catch (e) {}
-    }
-
-    // Client fallback
-    const newId = state.products.length + 1;
-    state.products.push({
-        id: newId,
+    // server is off, add it locally
+    const newItem = {
+        id: products.length + 1,
         name,
-        description: desc,
-        totalQuantity: qty,
-        availableQuantity: qty,
+        description,
         price,
-        status: 'ACTIVE',
-        imageUrl: 'tech'
+        originalPrice: originalPrice || price * 1.8,
+        totalQuantity: quantity,
+        availableQuantity: quantity,
+        category,
+        imageUrl: category === 'travel' ? 'flight' : (category === 'wearables' ? 'smartwatch' : 'tech')
+    };
+    products.push(newItem);
+    closeAddModal();
+    renderStorefront();
+    renderAdminProducts();
+    showToast('New item published successfully!', 'success');
+}
+
+async function restockItem(id, totalQuantity) {
+    try {
+        await fetch('/api/admin/reset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productId: id, quantity: totalQuantity })
+        });
+    } catch (error) {}
+
+    const item = products.find(product => product.id === id);
+    if (item) {
+        item.availableQuantity = totalQuantity;
+        item.status = 'ACTIVE';
+        renderStorefront();
+        renderAdminProducts();
+        showToast('Item stock has been reset to full.', 'success');
+    }
+}
+
+async function deleteItem(id) {
+    if (!confirm('Are you sure you want to remove this item?')) return;
+
+    try {
+        await fetch('/api/admin/products/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productId: id })
+        });
+    } catch (error) {}
+
+    products = products.filter(product => product.id !== id);
+    renderStorefront();
+    renderAdminProducts();
+    showToast('Item removed from catalog.', 'info');
+}
+
+function downloadOrdersCSV() {
+    if (orders.length === 0) {
+        showToast('No orders to download.', 'info');
+        return;
+    }
+
+    let csv = 'Order ID,Customer ID,Item Name,Amount Paid (INR),Status,Timestamp\n';
+    orders.forEach(order => {
+        csv += `${order.purchaseId},${order.userId},"${order.productName.replace(/"/g, '""')}",${order.price},${order.status || 'SUCCESS'},"${order.purchaseTime}"\n`;
     });
-    closeAddProductModal();
-    renderProducts();
-    state.selectedProductId = newId;
-    updateStorefrontDisplay();
-    showToast('New Flash Drop created!', 'success');
+
+    const file = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(file);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `orders_${Date.now()}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    showToast('Orders downloaded as CSV.', 'success');
 }
 
-// ==========================================
-// Ticket Modal & Confetti
-// ==========================================
-function openTicketModal(rec, remaining) {
-    const modal = document.getElementById('modal-ticket');
-    if (!modal) return;
+// ---------- 7. WorkerPool, WAL and Wait-For Graph ----------
+async function loadAlgorithmTelemetry(silent = false) {
+    try {
+        const [walResponse, poolResponse] = await Promise.all([
+            fetch('/api/admin/wal'),
+            fetch('/api/admin/workerpool')
+        ]);
 
-    document.getElementById('ticket-order-id').textContent = `#ORD-${rec.purchaseId}`;
-    document.getElementById('ticket-product-name').textContent = rec.productName;
-    document.getElementById('ticket-user-id').textContent = `User #${rec.userId} (${state.currentUser.name})`;
-    document.getElementById('ticket-remaining').textContent = `${remaining} Units Left`;
-    document.getElementById('ticket-latency').textContent = `${rec.latencyMs} ms`;
+        if (walResponse.ok && poolResponse.ok) {
+            const wal = await walResponse.json();
+            const pool = await poolResponse.json();
 
-    modal.classList.remove('hidden');
+            // WorkerPool
+            document.getElementById('worker-queue-size').textContent = pool.queueSize || 0;
+            const queuePercent = Math.min(100, Math.round(((pool.queueSize || 0) / (pool.queueCapacity || 2000)) * 100));
+            document.getElementById('worker-queue-bar').style.width = `${queuePercent}%`;
+            document.getElementById('worker-count-badge').textContent = `${pool.workerCount || 8} Workers Online`;
+
+            const workerGrid = document.getElementById('worker-cards-grid');
+            if (workerGrid && Array.isArray(pool.workers)) {
+                workerGrid.innerHTML = pool.workers.map(worker => `
+                    <div class="bg-stone-50 border border-stone-200 rounded-xl p-2.5 text-xs">
+                        <div class="flex items-center justify-between font-semibold text-stone-800">
+                            <span>${worker.name}</span>
+                            <span class="w-2 h-2 rounded-full ${worker.status === 'IDLE' ? 'bg-emerald-500' : 'bg-orange-500 animate-pulse'}"></span>
+                        </div>
+                        <div class="text-[10px] text-stone-500 mt-1 flex justify-between">
+                            <span>Status: ${worker.status}</span>
+                            <span>Done: ${worker.tasksProcessed}</span>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            // WAL
+            document.getElementById('wal-lsn-badge').textContent = `#${wal.currentLsn || 1000}`;
+            const walTerminal = document.getElementById('wal-log-terminal');
+            if (walTerminal && Array.isArray(wal.records)) {
+                if (wal.records.length === 0) {
+                    walTerminal.innerHTML = '<div class="text-stone-500">// WAL log is clean.</div>';
+                } else {
+                    walTerminal.innerHTML = wal.records.map(record => `
+                        <div class="text-[11px] leading-relaxed">
+                            <span class="text-orange-400 font-bold">[LSN #${record.lsn}]</span>
+                            <span class="${record.opType === 'ORDER_COMMIT' ? 'text-emerald-400 font-bold' : (record.opType === 'STOCK_RESERVE' ? 'text-cyan-400' : 'text-stone-400')}">${record.opType}</span>
+                            <span class="text-stone-300">| User #${record.userId}</span>
+                            <span class="text-stone-200">| "${escapeHtml(record.productName)}"</span>
+                            <span class="text-stone-400">| [${record.status}]</span>
+                        </div>
+                    `).join('');
+                }
+            }
+        }
+    } catch (error) {
+        if (!silent) console.log('Offline telemetry.');
+    }
+
+    await loadWaitForGraph(silent);
 }
 
-function closeTicketModal() {
-    playClickSound();
-    document.getElementById('modal-ticket')?.classList.add('hidden');
+async function triggerCheckpoint() {
+    try {
+        const response = await fetch('/api/admin/checkpoint', { method: 'POST' });
+        if (response.ok) {
+            const data = await response.json();
+            showToast(`WAL Checkpoint created at LSN #${data.checkpointLsn}`, 'success');
+            loadAlgorithmTelemetry();
+            return;
+        }
+    } catch (error) {}
+
+    showToast('WAL Checkpoint saved.', 'success');
 }
 
-function fireConfetti() {
+// ---------- 8. Wait-For Graph ----------
+
+// get the graph from backend and draw it
+async function loadWaitForGraph(silent = false) {
+    try {
+        const response = await fetch('/api/admin/waitforgraph');
+        if (!response.ok) return;
+        const graph = await response.json();
+
+        document.getElementById('wfg-total-waits').textContent = graph.totalWaits;
+        document.getElementById('wfg-total-deadlocks').textContent = graph.totalDeadlocks;
+        document.getElementById('wfg-last-deadlock').textContent = graph.lastDeadlock;
+
+        const badge = document.getElementById('wfg-status-badge');
+        if (graph.deadlock) {
+            badge.textContent = 'DEADLOCK!';
+            badge.className = 'bg-rose-100 text-rose-800 text-xs font-semibold px-2.5 py-1 rounded-full animate-pulse';
+        } else {
+            badge.textContent = 'No Deadlock';
+            badge.className = 'bg-emerald-100 text-emerald-800 text-xs font-semibold px-2.5 py-1 rounded-full';
+        }
+
+        drawWaitForGraph(graph);
+    } catch (error) {
+        if (!silent) console.log('Wait-for graph offline.');
+    }
+}
+
+// draw threads as circles and "waiting for" as arrows (SVG)
+function drawWaitForGraph(graph) {
+    const box = document.getElementById('wfg-graph');
+    if (!box) return;
+
+    if (graph.edges.length === 0) {
+        box.innerHTML = '<span class="text-xs text-stone-400">No thread is waiting right now.</span>';
+        return;
+    }
+
+    // every thread that is in some edge is a node
+    const names = [];
+    graph.edges.forEach(edge => {
+        if (!names.includes(edge.from)) names.push(edge.from);
+        if (!names.includes(edge.to)) names.push(edge.to);
+    });
+
+    // put the nodes on a circle
+    const width = 460, height = 260, centerX = width / 2, centerY = height / 2, radius = 85, nodeSize = 30;
+    const spots = {};
+    names.forEach((name, index) => {
+        const angle = (2 * Math.PI * index) / names.length - Math.PI / 2;
+        spots[name] = { x: centerX + radius * Math.cos(angle), y: centerY + radius * Math.sin(angle) };
+    });
+
+    let svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+        <defs>
+            <marker id="arrow-normal" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#78716C"/></marker>
+            <marker id="arrow-red" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#E11D48"/></marker>
+        </defs>`;
+
+    // arrows (red if the thread is in the deadlock cycle)
+    graph.edges.forEach(edge => {
+        const from = spots[edge.from];
+        const to = spots[edge.to];
+        const inCycle = graph.cycle.includes(edge.from) && graph.cycle.includes(edge.to);
+
+        // start and end of arrow at the edge of the circles
+        const dx = to.x - from.x, dy = to.y - from.y;
+        const length = Math.sqrt(dx * dx + dy * dy) || 1;
+        const startX = from.x + (dx / length) * nodeSize, startY = from.y + (dy / length) * nodeSize;
+        const endX = to.x - (dx / length) * (nodeSize + 3), endY = to.y - (dy / length) * (nodeSize + 3);
+
+        // bend the line a little so two opposite arrows do not overlap
+        const bendX = (startX + endX) / 2 - (dy / length) * 22;
+        const bendY = (startY + endY) / 2 + (dx / length) * 22;
+        const color = inCycle ? '#E11D48' : '#78716C';
+
+        svg += `<path d="M${startX},${startY} Q${bendX},${bendY} ${endX},${endY}" fill="none" stroke="${color}" stroke-width="2" marker-end="url(#arrow-${inCycle ? 'red' : 'normal'})"/>`;
+        svg += `<text x="${bendX}" y="${bendY - 4}" font-size="10" text-anchor="middle" fill="${color}" font-weight="600">${escapeHtml(edge.lock)}</text>`;
+    });
+
+    // circles with thread names
+    names.forEach(name => {
+        const spot = spots[name];
+        const inCycle = graph.cycle.includes(name);
+        const shortName = name.replace('FlashWorker-', 'Worker-').replace('Demo-Thread-', 'T');
+        svg += `<circle cx="${spot.x}" cy="${spot.y}" r="${nodeSize}" fill="${inCycle ? '#FFE4E6' : '#FFEDD5'}" stroke="${inCycle ? '#E11D48' : '#F97316'}" stroke-width="2"/>`;
+        svg += `<text x="${spot.x}" y="${spot.y + 4}" font-size="11" text-anchor="middle" font-weight="700" fill="#1C1917">${escapeHtml(shortName)}</text>`;
+    });
+
+    box.innerHTML = svg + '</svg>';
+}
+
+// button: start two threads that wait for each other
+async function runDeadlockDemo() {
+    try {
+        const response = await fetch('/api/admin/waitforgraph/demo', { method: 'POST' });
+        const data = await response.json();
+        if (!data.success) {
+            showToast(data.message, 'info');
+            return;
+        }
+        showToast('Deadlock demo started. Watch the graph!', 'success');
+
+        // check the graph every second while the demo is running
+        for (let second = 1; second <= 14; second++) {
+            setTimeout(() => loadWaitForGraph(true), second * 1000);
+        }
+    } catch (error) {
+        showToast('Server is not running, demo needs the Java backend.', 'error');
+    }
+}
+
+// ---------- 9. Small helper functions ----------
+
+// 1234.5 -> 1,234.50 (Indian format)
+function formatRupees(amount) {
+    if (isNaN(amount)) return '0.00';
+    return Number(amount).toLocaleString('en-IN', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+}
+
+function startCountdownTimer() {
+    let hours = 2, minutes = 18, seconds = 45;
+    setInterval(() => {
+        seconds--;
+        if (seconds < 0) {
+            seconds = 59;
+            minutes--;
+            if (minutes < 0) {
+                minutes = 59;
+                hours--;
+                if (hours < 0) hours = 2;
+            }
+        }
+        document.getElementById('timer-hours').textContent = String(hours).padStart(2, '0');
+        document.getElementById('timer-mins').textContent = String(minutes).padStart(2, '0');
+        document.getElementById('timer-secs').textContent = String(seconds).padStart(2, '0');
+    }, 1000);
+}
+
+function triggerConfetti() {
     if (window.confetti) {
         window.confetti({
-            particleCount: 80,
-            spread: 70,
+            particleCount: 70,
+            spread: 60,
             origin: { y: 0.65 },
-            colors: ['#06b6d4', '#10b981', '#a855f7', '#f43f5e']
+            colors: ['#FF6B00', '#F97316', '#10B981']
         });
     }
 }
 
-// ==========================================
-// Navigation & Tab Switching
-// ==========================================
-function switchTab(tabId) {
-    playClickSound();
-    state.currentTab = tabId;
-
-    const tabs = ['store', 'warroom', 'products', 'ledger', 'architecture'];
-    tabs.forEach(t => {
-        const el = document.getElementById(`tab-${t}`);
-        const btn = document.getElementById(`tab-btn-${t}`);
-        if (el) el.classList.toggle('hidden', t !== tabId);
-        if (btn) {
-            if (t === tabId) {
-                btn.className = 'nav-tab px-4 py-2 text-xs font-semibold rounded-lg transition-all duration-200 flex items-center space-x-2 text-white bg-white/10 shadow-sm';
-            } else {
-                btn.className = 'nav-tab px-4 py-2 text-xs font-semibold rounded-lg transition-all duration-200 flex items-center space-x-2 text-slate-400 hover:text-white hover:bg-white/5';
-            }
-        }
-    });
-}
-
-// ==========================================
-// Utilities
-// ==========================================
-function randomizeUser() {
-    const randomId = Math.floor(Math.random() * 900) + 10;
-    const randomName = USER_NAMES[Math.floor(Math.random() * USER_NAMES.length)];
-    state.currentUser = { id: randomId, name: randomName };
-
-    const display = document.getElementById('current-user-display');
-    if (display) display.textContent = `User #${randomId} (${randomName})`;
-}
-
-function initCountdownClock() {
-    let hours = 2, mins = 18, secs = 45, ms = 82;
-    setInterval(() => {
-        ms -= 4;
-        if (ms < 0) {
-            ms = 99;
-            secs--;
-            if (secs < 0) {
-                secs = 59;
-                mins--;
-                if (mins < 0) {
-                    mins = 59;
-                    hours--;
-                    if (hours < 0) hours = 2;
-                }
-            }
-        }
-        const hEl = document.getElementById('clock-hours');
-        const mEl = document.getElementById('clock-mins');
-        const sEl = document.getElementById('clock-secs');
-        const msEl = document.getElementById('clock-ms');
-
-        if (hEl) hEl.textContent = String(hours).padStart(2, '0');
-        if (mEl) mEl.textContent = String(mins).padStart(2, '0');
-        if (sEl) sEl.textContent = String(secs).padStart(2, '0');
-        if (msEl) msEl.textContent = String(ms).padStart(2, '0');
-    }, 40);
-}
-
 function showToast(message, type = 'info') {
-    const container = document.getElementById('toast-container');
-    if (!container) return;
+    const toastBox = document.getElementById('toast-box');
+    if (!toastBox) return;
 
+    const color = type === 'success' ? 'bg-emerald-600 text-white' : (type === 'error' ? 'bg-rose-600 text-white' : 'bg-stone-900 text-white');
     const toast = document.createElement('div');
-    const colors = {
-        success: 'border-emerald-500/40 bg-emerald-950/90 text-emerald-200',
-        error: 'border-rose-500/40 bg-rose-950/90 text-rose-200',
-        info: 'border-cyan-500/40 bg-slate-900/90 text-cyan-200'
-    };
+    toast.className = `toast-message px-4 py-2.5 rounded-xl shadow-lg text-xs font-medium flex items-center space-x-2 ${color}`;
+    toast.innerHTML = `<span>${type === 'success' ? '✓' : (type === 'error' ? '✕' : 'ℹ')}</span><span>${escapeHtml(message)}</span>`;
 
-    toast.className = `toast-item px-4 py-3 rounded-xl border backdrop-blur-md shadow-xl text-xs font-mono flex items-center space-x-2 ${colors[type] || colors.info}`;
-    toast.innerHTML = `
-        <span>${type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️'}</span>
-        <span>${escapeHtml(message)}</span>
-    `;
-
-    container.appendChild(toast);
-    setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transform = 'translateY(10px)';
-        setTimeout(() => toast.remove(), 300);
-    }, 3200);
+    toastBox.appendChild(toast);
+    setTimeout(() => toast.remove(), 2800);
 }
 
-function escapeHtml(str) {
-    if (!str) return '';
-    return String(str)
+// so that text from the server cannot break the page
+function escapeHtml(text) {
+    if (!text) return '';
+    return String(text)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
