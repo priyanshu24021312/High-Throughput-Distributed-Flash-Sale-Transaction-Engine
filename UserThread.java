@@ -16,7 +16,6 @@ public class UserThread extends Thread {
         long start = System.currentTimeMillis();
         success = FlashSale.purchase(userId, productId);
         latencyMs = System.currentTimeMillis() - start;
-
         if (success) {
             System.out.println(getName() + " -> SUCCESS (" + latencyMs + "ms)");
         } else {

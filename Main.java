@@ -64,7 +64,7 @@ public class Main {
             if (user.isSuccess()) successful++;
         }
         int failed = numberOfUsers - successful;
-        int remaining = Database.getAvailableQuantity(productId);
+        int remaining = Database.getAvailableQuantity(productId);   // read with a shared lock
 
         // final report
         System.out.println("\n\n========================================");
@@ -79,7 +79,7 @@ public class Main {
         System.out.println("Failed Purchases    : " + failed);
         System.out.println("Remaining Tickets   : " + remaining);
 
-        if (successful <= totalTickets && remaining >= 0) {
+        if (successful <= totalTickets && remaining >= 0 && successful + remaining == totalTickets) {
             System.out.println("Database Status     : CONSISTENT");
         } else {
             System.out.println("Database Status     : INCONSISTENT");
@@ -95,6 +95,29 @@ public class Main {
         }
 
         System.out.println("\n========================================");
+
+        // optional: show the deadlock (Wait-For Graph) on this product
+        System.out.print("\nRun deadlock simulation on this product? (y/n): ");
+        if (scanner.next().equalsIgnoreCase("y")) {
+            runDeadlockSimulation(productId);
+        }
         scanner.close();
+    }
+
+    // 3 buyer threads wait for each other's locks, the Wait-For Graph finds the cycle
+    private static void runDeadlockSimulation(int productId) {
+        System.out.println("\nStarting 3 buyer threads that wait for each other...");
+        String problem = DeadlockSimulation.start(productId, 3, 3, false);   // resolves itself after 3 seconds
+        if (problem != null) {
+            System.out.println(problem);
+            return;
+        }
+        DeadlockSimulation.waitUntilDone();
+
+        System.out.println("\nDeadlock cycle : " + DeadlockSimulation.getCycleText());
+        System.out.println("Victim         : " + DeadlockSimulation.getVictim());
+        for (DeadlockSimulation.Buyer buyer : DeadlockSimulation.getBuyers()) {
+            System.out.println(buyer.name + " -> " + buyer.state);
+        }
     }
 }

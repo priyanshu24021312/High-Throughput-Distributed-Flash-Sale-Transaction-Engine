@@ -1,10 +1,10 @@
 @echo off
-title FlashDeals - Flash Sale System (B.Tech 5th Sem Project)
+title FlashDeals - Flash Sale System (B.Tech Project)
 echo ========================================================
 echo        FlashDeals - Flash Sale Booking System
 echo ========================================================
 
-cd /d "%~dp0FlashSaleProject"
+cd /d "%~dp0"
 
 echo Checking and freeing port 8080...
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8080 " ^| findstr "LISTENING"') do (

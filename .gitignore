@@ -1,3 +1,4 @@
+﻿
 # Prerequisites
 *.d
 
@@ -22,7 +23,6 @@
 *.dylib
 *.dll
 *.so.*
-
 
 # Fortran module files
 *.mod
@@ -52,18 +52,50 @@ Makefile
 install_manifest.txt
 compile_commands.json
 
+# Java compiled files
+*.class
+*.jar
+!mysql-connector-j-*.jar
+
+# Node.js dependencies
+node_modules/
+npm-debug.log*
+.npm/
+
 # Temporary files
 *.tmp
 *.log
 *.bak
 *.swp
+Database_base.txt
+Database_ours.txt
+Database_theirs.txt
+
+# Runtime data
+data/*.dat
+data/*.wal
+data/*.log
+
+# IDE files
+.vscode/
+.idea/
+
+# Environment files
+.env
+.env.*
+
+# Project archives
+*.zip
+
+# PDF preview files
+Phase3_Report_preview.pdf
 
 # vcpkg
 vcpkg_installed/
 
-# debug information files
+# Debug information files
 *.dwo
 
-# test output & cache
+# Test output & cache
 Testing/
 .cache/

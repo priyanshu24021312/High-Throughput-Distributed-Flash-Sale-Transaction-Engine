@@ -1,26 +1,22 @@
 import java.util.*;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.ReentrantLock;
 
 // Wait-For Graph (used to find deadlocks)
-// Every thread is a node in the graph.
-// If thread A is waiting for a lock that thread B is holding, we draw an edge A -> B.
-// If the edges make a cycle (A -> B -> A) then those threads are in a deadlock.
+// Every transaction (thread) is a node. If A is waiting for a lock that B holds, there is an edge A -> B.
+// A cycle in the graph (A -> B -> A) means a deadlock.
+// The LockManager tells this class every time a thread starts or stops waiting.
 public class WaitForGraph {
 
-    // lock name -> thread that is holding it
-    private static final Map<String, String> lockHolder = new HashMap<>();
-    // thread name -> lock name it is waiting for
-    private static final Map<String, String> waitingFor = new LinkedHashMap<>();
+    private static class Wait {
+        String lock;
+        Set<String> holders;
+    }
 
+    // transaction -> the lock it is waiting for
+    private static final Map<String, Wait> waits = new LinkedHashMap<>();
     private static int totalWaits = 0;
     private static int totalDeadlocks = 0;
     private static String lastDeadlock = "None";
-
-    private static final AtomicBoolean demoRunning = new AtomicBoolean(false);
-    private static final AtomicInteger demoThreadsLeft = new AtomicInteger(0);
+    private static String countedCycle = "";   // the cycle we already counted, so we do not count it again
 
     public static class Edge {
         public String from;   // thread that is waiting
@@ -34,43 +30,29 @@ public class WaitForGraph {
         }
     }
 
-    // thread is going to ask for a lock
-    public static synchronized void startWaiting(String thread, String lock) {
-        waitingFor.put(thread, lock);
-        String holder = lockHolder.get(lock);
-        if (holder != null && !holder.equals(thread)) {
-            totalWaits++;
-            checkDeadlock(thread);
-        }
+    // thread is waiting for this lock, holders = threads that block it
+    public static synchronized void setWaiting(String txn, String lock, Set<String> holders) {
+        Wait old = waits.get(txn);
+        if (old == null || !old.lock.equals(lock)) totalWaits++;
+        Wait now = new Wait();
+        now.lock = lock;
+        now.holders = new LinkedHashSet<>(holders);
+        waits.put(txn, now);
+        checkDeadlock(txn);
     }
 
-    // thread got the lock, so it is not waiting anymore
-    public static synchronized void gotLock(String thread, String lock) {
-        waitingFor.remove(thread);
-        lockHolder.put(lock, thread);
+    // thread got the lock or gave up
+    public static synchronized void stopWaiting(String txn) {
+        if (waits.remove(txn) != null && findCycle().isEmpty()) countedCycle = "";
     }
 
-    // thread is done with the lock
-    public static synchronized void releaseLock(String thread, String lock) {
-        if (thread.equals(lockHolder.get(lock))) {
-            lockHolder.remove(lock);
-        }
-    }
-
-    // thread gave up waiting (timeout)
-    public static synchronized void stopWaiting(String thread) {
-        waitingFor.remove(thread);
-    }
-
-    // all current edges of the graph
     public static synchronized List<Edge> getEdges() {
         List<Edge> edges = new ArrayList<>();
-        for (Map.Entry<String, String> entry : waitingFor.entrySet()) {
-            String waiter = entry.getKey();
-            String lock = entry.getValue();
-            String holder = lockHolder.get(lock);
-            if (holder != null && !holder.equals(waiter)) {
-                edges.add(new Edge(waiter, holder, lock));
+        for (Map.Entry<String, Wait> entry : waits.entrySet()) {
+            for (String holder : entry.getValue().holders) {
+                if (!holder.equals(entry.getKey())) {
+                    edges.add(new Edge(entry.getKey(), holder, entry.getValue().lock));
+                }
             }
         }
         return edges;
@@ -84,7 +66,7 @@ public class WaitForGraph {
         return graph;
     }
 
-    // returns the threads that are in a cycle, empty list if there is no deadlock
+    // threads that are in a cycle, empty list = no deadlock
     public static synchronized List<String> findCycle() {
         Map<String, List<String>> graph = buildGraph();
         Set<String> finished = new HashSet<>();
@@ -95,7 +77,7 @@ public class WaitForGraph {
         return new ArrayList<>();
     }
 
-    // depth first search, path = nodes on the current way
+    // depth first search, path = nodes on the way we are walking now
     private static List<String> dfs(String node, Map<String, List<String>> graph, List<String> path, Set<String> finished) {
         if (path.contains(node)) {
             // we came back to a node that is already on the path, so this is a cycle
@@ -112,53 +94,20 @@ public class WaitForGraph {
         return new ArrayList<>();
     }
 
-    private static void checkDeadlock(String thread) {
+    private static void checkDeadlock(String txn) {
         List<String> cycle = findCycle();
-        if (cycle.contains(thread)) {
-            totalDeadlocks++;
-            lastDeadlock = String.join(" -> ", cycle) + " -> " + cycle.get(0);
-            System.out.println("[WaitForGraph] DEADLOCK found: " + lastDeadlock);
-        }
+        if (!cycle.contains(txn)) return;
+        List<String> sorted = new ArrayList<>(cycle);
+        Collections.sort(sorted);
+        String key = String.join(",", sorted);
+        if (key.equals(countedCycle)) return;
+        countedCycle = key;
+        totalDeadlocks++;
+        lastDeadlock = String.join(" -> ", cycle) + " -> " + cycle.get(0);
+        System.out.println("[WaitForGraph] DEADLOCK found: " + lastDeadlock);
     }
 
     public static synchronized int getTotalWaits() { return totalWaits; }
     public static synchronized int getTotalDeadlocks() { return totalDeadlocks; }
     public static synchronized String getLastDeadlock() { return lastDeadlock; }
-
-    // ---------- demo (button in admin panel) ----------
-    // Two threads take the locks in opposite order, so they wait for each other.
-    // Thread 1 gives up after 6 seconds (victim) and that breaks the deadlock.
-    public static boolean startDeadlockDemo() {
-        if (!demoRunning.compareAndSet(false, true)) return false;
-        ReentrantLock lockA = new ReentrantLock();
-        ReentrantLock lockB = new ReentrantLock();
-        demoThreadsLeft.set(2);
-        new Thread(() -> demoTask("Demo-Thread-1", "LOCK-A", lockA, "LOCK-B", lockB, 6), "Demo-Thread-1").start();
-        new Thread(() -> demoTask("Demo-Thread-2", "LOCK-B", lockB, "LOCK-A", lockA, 12), "Demo-Thread-2").start();
-        return true;
-    }
-
-    private static void demoTask(String name, String firstName, ReentrantLock first,
-                                 String secondName, ReentrantLock second, int waitSeconds) {
-        first.lock();
-        gotLock(name, firstName);
-        try {
-            Thread.sleep(1000); // let the other thread take its first lock
-            startWaiting(name, secondName);
-            if (second.tryLock(waitSeconds, TimeUnit.SECONDS)) {
-                gotLock(name, secondName);
-                second.unlock();
-                releaseLock(name, secondName);
-            } else {
-                stopWaiting(name);
-                System.out.println("[WaitForGraph] " + name + " gave up waiting for " + secondName + " (victim)");
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } finally {
-            first.unlock();
-            releaseLock(name, firstName);
-            if (demoThreadsLeft.decrementAndGet() == 0) demoRunning.set(false);
-        }
-    }
 }

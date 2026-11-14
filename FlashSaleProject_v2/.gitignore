@@ -1,5 +1,0 @@
-*.class
-*.jar
-data/*.wal
-data/wal.log
-data/checkpoint.meta

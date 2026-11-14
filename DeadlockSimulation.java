@@ -3,16 +3,17 @@ import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.ReentrantLock;
 
-// Deadlock Simulation (to show the Wait-For Graph)
+// Deadlock Simulation (to show the Wait-For Graph and the LockManager)
 // The admin starts a flash sale of one product with 2 to 5 buyer threads.
-// Buyer 1 takes lock 1 and asks for lock 2, buyer 2 takes lock 2 and asks for lock 3 ...
-// the last buyer asks for lock 1. So they all wait in a circle and the deadlock always happens.
-//   Buyer-9001 -> Buyer-9002 -> Buyer-9003 -> Buyer-9001
-// The Wait-For Graph finds this cycle. Then one buyer (the victim) is rolled back,
-// the lock is free again and the other buyers finish their booking.
+// Mode 1, deadlock: buyer 1 takes lock 1 and asks for lock 2, buyer 2 takes lock 2 and asks for lock 3 ...
+//   the last buyer asks for lock 1, so they wait in a circle and the deadlock always happens.
+//   The Wait-For Graph finds the cycle. The youngest buyer is the victim: it is rolled back (its locks are released),
+//   the others finish, and then the victim tries again (like a real DBMS does).
+// Mode 2, sorted lock order (deadlock prevention): every buyer takes the lower lock first,
+//   a circle can never form and nobody has to be rolled back.
 public class DeadlockSimulation {
 
     private static final String[] LOCK_NAMES = {"Stock-Lock", "Payment-Lock", "Order-Lock", "Coupon-Lock", "Delivery-Lock"};
@@ -25,7 +26,6 @@ public class DeadlockSimulation {
         public volatile String holds = "-";
         public volatile String waitsFor = "-";
         public volatile String state = "STARTING";
-        public volatile boolean aborted = false;   // true = this buyer is the victim
     }
 
     private static final List<Buyer> buyers = new CopyOnWriteArrayList<>();
@@ -33,6 +33,7 @@ public class DeadlockSimulation {
 
     private static volatile String status = "IDLE";   // IDLE, RUNNING, DEADLOCK, RESOLVED
     private static volatile boolean running = false;
+    private static volatile boolean ordered = false;
     private static volatile int productId = 0;
     private static volatile String productName = "";
     private static volatile String victim = "None";
@@ -40,13 +41,14 @@ public class DeadlockSimulation {
     private static volatile boolean resolveRequested = false;
     private static volatile long deadlockTime = 0;
     private static volatile int autoResolveSeconds = 30;
+    private static volatile long waitMs = 60000;
 
     // graph picture taken at the moment of the deadlock (so admin can still see it after it is resolved)
     private static volatile List<WaitForGraph.Edge> snapshotEdges = new ArrayList<>();
     private static volatile List<String> snapshotCycle = new ArrayList<>();
 
     // returns null if started, otherwise the reason why it could not start
-    public static synchronized String start(int productIdToSell, int threadCount, int autoSeconds) {
+    public static synchronized String start(int productIdToSell, int threadCount, int autoSeconds, boolean sortedOrder) {
         if (running) return "A simulation is already running.";
         Database.Product product = Database.getProduct(productIdToSell);
         if (product == null) return "Product not found.";
@@ -57,6 +59,7 @@ public class DeadlockSimulation {
         buyers.clear();
         status = "RUNNING";
         running = true;
+        ordered = sortedOrder;
         productId = productIdToSell;
         productName = product.name;
         victim = "None";
@@ -64,30 +67,26 @@ public class DeadlockSimulation {
         resolveRequested = false;
         deadlockTime = 0;
         autoResolveSeconds = autoSeconds;
+        waitMs = (autoSeconds + 30) * 1000L;
         snapshotEdges = new ArrayList<>();
         snapshotCycle = new ArrayList<>();
         threadsLeft.set(count);
 
-        ReentrantLock[] locks = new ReentrantLock[count];
         for (int i = 0; i < count; i++) {
-            locks[i] = new ReentrantLock();
             Buyer buyer = new Buyer();
             buyer.userId = nextUserId.getAndIncrement();
             buyer.name = "Buyer-" + buyer.userId;
             buyers.add(buyer);
         }
 
-        // every buyer waits here until all buyers have their first lock
+        // in deadlock mode every buyer waits here until all buyers have their first lock
         CyclicBarrier barrier = new CyclicBarrier(count);
 
         for (int i = 0; i < count; i++) {
+            int index = i;
             int next = (i + 1) % count;   // the last buyer asks for the lock of the first buyer
             Buyer buyer = buyers.get(i);
-            ReentrantLock firstLock = locks[i];
-            ReentrantLock secondLock = locks[next];
-            String firstName = LOCK_NAMES[i];
-            String secondName = LOCK_NAMES[next];
-            new Thread(() -> buyerTask(buyer, firstLock, firstName, secondLock, secondName, barrier), buyer.name).start();
+            new Thread(() -> buyerTask(buyer, index, next, barrier), buyer.name).start();
         }
 
         Thread monitor = new Thread(DeadlockSimulation::monitorTask, "Deadlock-Monitor");
@@ -96,64 +95,72 @@ public class DeadlockSimulation {
         return null;
     }
 
-    private static void buyerTask(Buyer me, ReentrantLock firstLock, String firstName,
-                                  ReentrantLock secondLock, String secondName, CyclicBarrier barrier) {
+    private static void buyerTask(Buyer me, int index, int next, CyclicBarrier barrier) {
+        String first = LOCK_NAMES[index];
+        String second = LOCK_NAMES[next];
+        if (ordered && index > next) {
+            // sorted order: always the lower lock first
+            first = LOCK_NAMES[next];
+            second = LOCK_NAMES[index];
+        }
         try {
-            // 1. take the first lock
-            firstLock.lock();
-            WaitForGraph.gotLock(me.name, firstName);
-            me.holds = firstName;
-            me.state = "HOLDING " + firstName;
+            try {
+                // 1. growing phase: take the first lock
+                LockManager.lock(me.name, first, true, waitMs, false);
+                me.holds = first;
+                me.state = "HOLDING " + first;
 
-            // 2. wait until every buyer has its first lock, so the circle is sure to form
-            barrier.await();
+                // 2. in deadlock mode wait until every buyer has its first lock, so the circle is sure to form
+                if (ordered) Thread.sleep(400); else barrier.await(20, TimeUnit.SECONDS);
 
-            // 3. ask for the second lock, which another buyer is holding
-            me.waitsFor = secondName;
-            me.state = "WAITING for " + secondName;
-            WaitForGraph.startWaiting(me.name, secondName);
-
-            boolean gotSecond = false;
-            while (!gotSecond && !me.aborted) {
-                gotSecond = secondLock.tryLock(200, TimeUnit.MILLISECONDS);
-            }
-
-            if (gotSecond) {
-                // got both locks, so book the ticket (goes through WorkerPool and WAL)
-                WaitForGraph.gotLock(me.name, secondName);
+                // 3. ask for the second lock, which another buyer is holding
+                me.waitsFor = second;
+                me.state = "WAITING for " + second;
+                LockManager.lock(me.name, second, true, waitMs, false);
                 me.waitsFor = "-";
-                me.holds = firstName + ", " + secondName;
-                try {
-                    WorkerPool.PurchaseResult result = WorkerPool.submitSync(me.userId, productId, 5000);
-                    if (result.success) {
-                        me.state = "BOOKED (" + result.remaining + " left)";
-                    } else {
-                        me.state = "REJECTED: " + result.message;
-                    }
-                } finally {
-                    secondLock.unlock();
-                    WaitForGraph.releaseLock(me.name, secondName);
-                }
-            } else {
-                // this buyer is the victim: give up and roll back (nothing is booked)
-                WaitForGraph.stopWaiting(me.name);
+                me.holds = first + ", " + second;
+                book(me, "BOOKED");
+            } catch (LockManager.LockAbort e) {
+                // this buyer is the victim: roll back, release the locks, nothing is booked
+                LockManager.unlockAll(me.name);
+                me.holds = "-";
                 me.waitsFor = "-";
                 String txnId = "TXN-" + System.currentTimeMillis() + "-" + me.userId;
                 WAL.logBegin(txnId, me.userId, productId);
                 WAL.logAbort(txnId, me.userId, productId, "DEADLOCK_VICTIM");
-                me.state = "ROLLED BACK (deadlock victim)";
+                me.state = "ROLLED BACK (deadlock victim), will retry";
+
+                // re-run the transaction later, this time in sorted order
+                Thread.sleep(800);
+                String low = LOCK_NAMES[Math.min(index, next)];
+                String high = LOCK_NAMES[Math.max(index, next)];
+                me.state = "RETRYING (sorted lock order)";
+                LockManager.lock(me.name, low, true, waitMs, false);
+                me.holds = low;
+                LockManager.lock(me.name, high, true, waitMs, false);
+                me.holds = low + ", " + high;
+                book(me, "BOOKED after retry");
             }
-        } catch (InterruptedException | BrokenBarrierException e) {
-            me.state = "ERROR";
+        } catch (LockManager.LockAbort again) {
+            me.state = "FAILED: " + again.reason;
+        } catch (InterruptedException | BrokenBarrierException | TimeoutException e) {
+            me.state = "ERROR: " + e.getClass().getSimpleName();
             Thread.currentThread().interrupt();
         } finally {
-            if (firstLock.isHeldByCurrentThread()) {
-                firstLock.unlock();
-                WaitForGraph.releaseLock(me.name, firstName);
-            }
+            LockManager.unlockAll(me.name);
             me.holds = "-";
             me.waitsFor = "-";
             threadsLeft.decrementAndGet();
+        }
+    }
+
+    // both locks are ours, so book the ticket (WorkerPool + WAL + payment)
+    private static void book(Buyer me, String label) {
+        WorkerPool.PurchaseResult result = FlashSale.buyAndPay(me.userId, productId);
+        if (result.success) {
+            me.state = label + " (PNR " + result.pnr + ")";
+        } else {
+            me.state = "REJECTED: " + result.message;
         }
     }
 
@@ -205,7 +212,7 @@ public class DeadlockSimulation {
             return;
         }
         victim = chosen.name;
-        chosen.aborted = true;
+        LockManager.abort(chosen.name);   // wakes the buyer, its lock request fails with DEADLOCK_VICTIM
         System.out.println("[DeadlockSimulation] Victim chosen: " + chosen.name + " (rolled back to break the deadlock)");
     }
 
@@ -238,6 +245,7 @@ public class DeadlockSimulation {
 
     public static List<Buyer> getBuyers() { return buyers; }
     public static String getStatus() { return status; }
+    public static boolean isOrdered() { return ordered; }
     public static int getProductId() { return productId; }
     public static String getProductName() { return productName; }
     public static String getVictim() { return victim; }

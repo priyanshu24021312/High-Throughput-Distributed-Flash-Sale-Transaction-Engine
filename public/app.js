@@ -4,6 +4,8 @@
  * - fetch API to talk with the Java backend
  * - customer view and admin view
  * - WorkerPool, WAL and Wait-For Graph display
+ * - admin can edit products and run the deadlock simulation
+ * - customer holds a seat, pays within 5 minutes and gets a PNR
  */
 
 // ---------- 1. Variables ----------
@@ -13,6 +15,11 @@ let selectedProductId = 1;
 let currentCategory = 'all';
 let isAdminLoggedIn = sessionStorage.getItem('admin_logged_in') === 'true';
 let currentAdminTab = 'inventory';   // inventory, orders, algorithms
+let editingProductId = null;         // null = adding a new item, a number = editing that item
+let fastPollTimer = null;            // checks the graph every second while the simulation runs
+const selectedForCart = new Set();   // products the customer ticked to book together
+let currentHold = null;              // the seats that are held for the customer right now
+let payTimer = null;                 // countdown of the hold
 
 // users for testing many buyers
 const studentUsers = [
@@ -58,8 +65,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         await loadProducts(true);
         if (isAdminLoggedIn) {
             await loadAdminOverview(true);
+            if (currentAdminTab === 'orders') await loadOrders(true);
             if (currentAdminTab === 'algorithms') {
                 await loadAlgorithmTelemetry(true);
+            } else {
+                await loadWaitForGraph(true);   // so the red alert shows on every admin tab
             }
         }
     }, 3000);
@@ -208,7 +218,10 @@ function renderProductsGrid() {
         <div class="product-card bg-white border border-stone-200 rounded-2xl p-5 flex flex-col justify-between shadow-xs">
             <div>
                 <div class="flex items-center justify-between mb-3">
-                    <span class="text-3xl p-2 bg-stone-50 rounded-xl border border-stone-100">${icon}</span>
+                    <div class="flex items-center space-x-2">
+                        <input type="checkbox" ${isSoldOut ? 'disabled' : ''} ${selectedForCart.has(item.id) ? 'checked' : ''} onchange="toggleCart(${item.id})" title="Tick to book together with other items" class="w-4 h-4 accent-orange-600">
+                        <span class="text-3xl p-2 bg-stone-50 rounded-xl border border-stone-100">${icon}</span>
+                    </div>
                     <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full ${isSoldOut ? 'bg-rose-100 text-rose-700' : 'bg-orange-100 text-orange-700'}">
                         ${isSoldOut ? 'Sold Out' : `${item.availableQuantity} Left`}
                     </span>
@@ -278,82 +291,187 @@ function updateUserDisplay() {
     if (userText) userText.textContent = `User #${activeUser.id} (${activeUser.name})`;
 }
 
-// ---------- 5. Buying ----------
+// ---------- 5. Buying: hold -> pay -> confirmed ----------
 async function buySpotlightProduct() {
     await buyProductById(selectedProductId);
 }
 
 async function buyProductById(id) {
-    const item = products.find(product => product.id === id);
-    if (!item || item.availableQuantity <= 0) {
-        showToast('Sorry! This item is already sold out.', 'error');
+    await startBooking([id]);
+}
+
+// tick / untick a product for the cart
+function toggleCart(id) {
+    if (selectedForCart.has(id)) selectedForCart.delete(id);
+    else selectedForCart.add(id);
+    updateCartBar();
+}
+
+function updateCartBar() {
+    const bar = document.getElementById('cart-bar');
+    if (!bar) return;
+    let total = 0;
+    selectedForCart.forEach(id => {
+        const item = products.find(product => product.id === id);
+        if (item) total += item.price;
+    });
+    document.getElementById('cart-count').textContent = selectedForCart.size;
+    document.getElementById('cart-total').textContent = formatRupees(total);
+    bar.classList.toggle('hidden', selectedForCart.size < 1);
+}
+
+function clearCart() {
+    selectedForCart.clear();
+    updateCartBar();
+    renderProductsGrid();
+}
+
+async function buySelected() {
+    await startBooking([...selectedForCart]);
+}
+
+// step 1: the server holds the seat (all the items together, or none)
+async function startBooking(ids) {
+    if (currentHold) {
+        showToast('Please finish your current payment first.', 'info');
+        return;
+    }
+    const chosen = ids.map(id => products.find(product => product.id === id)).filter(Boolean);
+    if (chosen.length === 0) return;
+    const soldOut = chosen.find(item => item.availableQuantity <= 0);
+    if (soldOut) {
+        showToast(`${soldOut.name} is already sold out.`, 'error');
         return;
     }
 
     const buyButton = document.getElementById('btn-spotlight-buy');
     if (buyButton) buyButton.disabled = true;
 
-    // backend does: WorkerPool -> WAL (log) -> Database
+    // backend does: WorkerPool queue -> worker -> 2PL locks -> WAL -> hold
     try {
+        const body = ids.length > 1 ? { userId: activeUser.id, productIds: ids } : { userId: activeUser.id, productId: ids[0] };
         const response = await fetch('/api/purchase', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: activeUser.id, productId: item.id })
+            body: JSON.stringify(body)
         });
         const result = await response.json();
-
         if (result.success) {
-            triggerConfetti();
-
-            const newOrder = {
-                purchaseId: Math.floor(1000 + Math.random() * 9000),
-                userId: activeUser.id,
-                productId: item.id,
-                productName: item.name,
-                price: item.price,
-                status: 'SUCCESS',
-                purchaseTime: new Date().toLocaleTimeString(),
-                workerName: result.workerName || 'FlashWorker-1'
-            };
-            orders.unshift(newOrder);
-
-            item.availableQuantity = result.remaining;
-            if (item.availableQuantity <= 0) item.status = 'SOLD OUT';
-
-            showReceiptModal(newOrder, result.remaining, result.workerName);
-            renderStorefront();
+            await loadProducts(true);
+            showPayModal(result);
         } else {
             showToast(result.message || 'Ticket could not be booked.', 'error');
+            await loadProducts(true);
         }
     } catch (error) {
-        // server is off, book it locally
-        item.availableQuantity--;
-        const offlineOrder = {
-            purchaseId: Math.floor(1000 + Math.random() * 9000),
-            userId: activeUser.id,
-            productId: item.id,
-            productName: item.name,
-            price: item.price,
-            status: 'SUCCESS',
-            purchaseTime: new Date().toLocaleTimeString(),
-            workerName: 'FlashWorker-Local'
-        };
-        orders.unshift(offlineOrder);
-        triggerConfetti();
-        showReceiptModal(offlineOrder, item.availableQuantity, 'FlashWorker-Local');
-        renderStorefront();
+        showToast('Server is not running. Start the Java server and try again.', 'error');
     }
 
     if (buyButton) buyButton.disabled = false;
 }
 
-function showReceiptModal(order, remaining, workerName) {
-    document.getElementById('receipt-id').textContent = `#ORD-${order.purchaseId}`;
-    document.getElementById('receipt-name').textContent = order.productName;
-    document.getElementById('receipt-user').textContent = `User #${order.userId} (${activeUser.name})`;
-    document.getElementById('receipt-amount').textContent = `₹${formatRupees(order.price)}`;
-    document.getElementById('receipt-remaining').textContent = `${remaining} Units Left`;
-    document.getElementById('receipt-worker').textContent = `${workerName || 'WorkerPool'} (WAL Logged)`;
+function showPayModal(result) {
+    currentHold = {
+        items: result.items,
+        price: result.price,
+        workerName: result.workerName,
+        endsAt: Date.now() + result.expiresInSeconds * 1000
+    };
+    document.getElementById('pay-items').innerHTML = result.items.map(item => `
+        <div class="flex justify-between">
+            <span class="truncate max-w-[190px]">${escapeHtml(item.name)}</span>
+            <span class="font-semibold text-stone-800">₹${formatRupees(item.price)}</span>
+        </div>`).join('');
+    document.getElementById('pay-total').textContent = `₹${formatRupees(result.price)}`;
+    document.getElementById('pay-worker').textContent = `${result.workerName} (LSN ${result.lsn})`;
+    document.getElementById('btn-pay-now').disabled = false;
+    document.getElementById('btn-pay-now').textContent = 'Pay Now';
+    document.getElementById('btn-pay-cancel').disabled = false;
+    document.getElementById('modal-pay').classList.remove('hidden');
+
+    tickPayTimer();
+    payTimer = setInterval(tickPayTimer, 1000);
+}
+
+function tickPayTimer() {
+    if (!currentHold) return;
+    const left = Math.max(0, Math.round((currentHold.endsAt - Date.now()) / 1000));
+    const minutes = String(Math.floor(left / 60)).padStart(2, '0');
+    const seconds = String(left % 60).padStart(2, '0');
+    document.getElementById('pay-timer').textContent = `${minutes}:${seconds}`;
+    if (left <= 0) {
+        closePayModal();
+        showToast('Your hold has expired, the seat went back to other customers.', 'error');
+        loadProducts(true);
+    }
+}
+
+function closePayModal() {
+    if (payTimer) clearInterval(payTimer);
+    payTimer = null;
+    currentHold = null;
+    document.getElementById('modal-pay')?.classList.add('hidden');
+}
+
+// step 2: payment (the gateway is only a pretend delay in this project)
+async function payNow() {
+    if (!currentHold) return;
+    const hold = currentHold;
+    document.getElementById('btn-pay-now').disabled = true;
+    document.getElementById('btn-pay-cancel').disabled = true;
+    document.getElementById('btn-pay-now').textContent = 'Processing payment...';
+    try {
+        const response = await fetch('/api/pay', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ purchaseIds: hold.items.map(item => item.purchaseId), action: 'pay' })
+        });
+        const data = await response.json();
+        closePayModal();
+        await loadProducts(true);
+        await loadOrders(true);
+        if (data.success) {
+            triggerConfetti();
+            clearCart();
+            showReceiptModal(hold, data);
+        } else {
+            showToast(data.message || 'Payment failed.', 'error');
+        }
+    } catch (error) {
+        closePayModal();
+        showToast('Server is not running.', 'error');
+    }
+}
+
+// customer changes his mind (or the payment fails): the seat goes back
+async function cancelBooking() {
+    if (!currentHold) return;
+    const hold = currentHold;
+    try {
+        await fetch('/api/pay', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ purchaseIds: hold.items.map(item => item.purchaseId), action: 'cancel' })
+        });
+        showToast('Booking cancelled, the seat is free again.', 'info');
+    } catch (error) {
+        showToast('Server is not running.', 'error');
+    }
+    closePayModal();
+    await loadProducts(true);
+    await loadOrders(true);
+}
+
+function showReceiptModal(hold, data) {
+    const first = hold.items[0];
+    const left = products.find(product => product.id === first.productId);
+    document.getElementById('receipt-id').textContent = hold.items.length > 1 ? `#ORD-${first.purchaseId} +${hold.items.length - 1}` : `#ORD-${first.purchaseId}`;
+    document.getElementById('receipt-pnr').textContent = data.pnr;
+    document.getElementById('receipt-name').textContent = hold.items.length > 1 ? `${hold.items.length} items` : first.name;
+    document.getElementById('receipt-user').textContent = `User #${activeUser.id} (${activeUser.name})`;
+    document.getElementById('receipt-amount').textContent = `₹${formatRupees(hold.price)}`;
+    document.getElementById('receipt-remaining').textContent = left ? `${left.availableQuantity} Units Left` : '-';
+    document.getElementById('receipt-worker').textContent = `${hold.workerName} (WAL Logged)`;
 
     document.getElementById('modal-receipt')?.classList.remove('hidden');
 }
@@ -440,6 +558,7 @@ function showAdminPanel() {
     loadAdminOverview();
     renderAdminProducts();
     renderAdminOrders();
+    loadWaitForGraph(true);
     window.location.hash = '#admin';
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -507,11 +626,29 @@ function renderAdminProducts() {
                 </span>
             </td>
             <td class="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
+                <button onclick="openEditModal(${product.id})" class="px-2.5 py-1 bg-orange-50 hover:bg-orange-100 text-orange-700 font-semibold rounded-lg">Edit</button>
                 <button onclick="restockItem(${product.id}, ${product.totalQuantity})" class="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold rounded-lg">Restock</button>
                 <button onclick="deleteItem(${product.id})" class="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold rounded-lg">Delete</button>
             </td>
         </tr>
     `).join('');
+
+    fillSimulationProducts();
+}
+
+function statusBadge(order) {
+    let color = 'bg-emerald-100 text-emerald-800';
+    let text = order.status || 'CONFIRMED';
+    if (text === 'PENDING_PAYMENT') {
+        color = 'bg-amber-100 text-amber-800';
+        const left = order.expiresInSeconds || 0;
+        text = `PENDING (${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')})`;
+    } else if (text === 'PAYMENT_FAILED') {
+        color = 'bg-rose-100 text-rose-800';
+    } else if (text === 'EXPIRED') {
+        color = 'bg-stone-200 text-stone-700';
+    }
+    return `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${color}">${text}</span>`;
 }
 
 function renderAdminOrders() {
@@ -519,7 +656,7 @@ function renderAdminOrders() {
     if (!tableBody) return;
 
     if (orders.length === 0) {
-        tableBody.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-stone-400 text-xs">No orders recorded yet.</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="7" class="py-6 text-center text-stone-400 text-xs">No orders recorded yet.</td></tr>';
         return;
     }
 
@@ -529,11 +666,8 @@ function renderAdminOrders() {
             <td class="py-3 px-4 text-orange-700 font-semibold">User #${order.userId}</td>
             <td class="py-3 px-4 text-stone-800">${escapeHtml(order.productName)}</td>
             <td class="py-3 px-4 font-bold text-stone-900">₹${formatRupees(order.price || 0)}</td>
-            <td class="py-3 px-4">
-                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                    ${order.status || 'SUCCESS'}
-                </span>
-            </td>
+            <td class="py-3 px-4">${statusBadge(order)}</td>
+            <td class="py-3 px-4 font-mono text-stone-600">${escapeHtml(order.pnr || '-')}</td>
             <td class="py-3 px-4 text-right text-stone-500">${order.purchaseTime}</td>
         </tr>
     `).join('');
@@ -548,6 +682,42 @@ function searchOrders() {
 }
 
 function openAddModal() {
+    editingProductId = null;
+    document.getElementById('add-modal-title').textContent = 'Add New Product / Ticket';
+    document.getElementById('add-modal-submit').textContent = 'Save & Publish';
+    document.getElementById('edit-hint')?.classList.add('hidden');
+
+    // empty form for a new item
+    document.getElementById('new-item-category').value = 'travel';
+    document.getElementById('new-item-name').value = '';
+    document.getElementById('new-item-desc').value = '';
+    document.getElementById('new-item-price').value = 2999;
+    document.getElementById('new-item-original').value = 6999;
+    document.getElementById('new-item-qty').value = 30;
+    handleCategoryChange('travel');
+
+    document.getElementById('modal-add-item')?.classList.remove('hidden');
+}
+
+// same form, but filled with the details of the item that admin wants to change
+function openEditModal(id) {
+    const item = products.find(product => product.id === id);
+    if (!item) return;
+
+    editingProductId = id;
+    document.getElementById('add-modal-title').textContent = 'Edit Product / Ticket';
+    document.getElementById('add-modal-submit').textContent = 'Update Product';
+    document.getElementById('edit-hint')?.classList.remove('hidden');
+
+    const category = ['travel', 'wearables', 'electronics'].includes(item.category) ? item.category : 'electronics';
+    document.getElementById('new-item-category').value = category;
+    document.getElementById('new-item-name').value = item.name;
+    document.getElementById('new-item-desc').value = item.description || '';
+    document.getElementById('new-item-price').value = item.price;
+    document.getElementById('new-item-original').value = item.originalPrice;
+    document.getElementById('new-item-qty').value = item.totalQuantity;
+    handleCategoryChange(category);
+
     document.getElementById('modal-add-item')?.classList.remove('hidden');
 }
 
@@ -577,6 +747,12 @@ async function handleAddNewItem(event) {
     const quantity = parseInt(document.getElementById('new-item-qty')?.value, 10);
 
     if (!name || isNaN(price) || isNaN(quantity)) return;
+
+    // admin is editing an old item, so update it instead of adding a new one
+    if (editingProductId !== null) {
+        await updateItem(editingProductId, { name, description, price, originalPrice, quantity, category });
+        return;
+    }
 
     try {
         const response = await fetch('/api/admin/products', {
@@ -609,6 +785,42 @@ async function handleAddNewItem(event) {
     renderStorefront();
     renderAdminProducts();
     showToast('New item published successfully!', 'success');
+}
+
+async function updateItem(id, details) {
+    try {
+        const response = await fetch('/api/admin/products/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productId: id, ...details })
+        });
+        const data = await response.json();
+        if (response.ok && data.success) {
+            closeAddModal();
+            await loadProducts();
+            showToast('Product updated successfully!', 'success');
+        } else {
+            showToast(data.message || 'Could not update the product.', 'error');
+        }
+        return;
+    } catch (error) {}
+
+    // server is off, change it locally
+    const item = products.find(product => product.id === id);
+    if (item) {
+        const sold = item.totalQuantity - item.availableQuantity;
+        item.name = details.name;
+        item.description = details.description;
+        item.price = details.price;
+        item.originalPrice = details.originalPrice || item.originalPrice;
+        item.category = details.category;
+        item.totalQuantity = details.quantity;
+        item.availableQuantity = Math.max(0, details.quantity - sold);
+    }
+    closeAddModal();
+    renderStorefront();
+    renderAdminProducts();
+    showToast('Product updated successfully!', 'success');
 }
 
 async function restockItem(id, totalQuantity) {
@@ -653,9 +865,9 @@ function downloadOrdersCSV() {
         return;
     }
 
-    let csv = 'Order ID,Customer ID,Item Name,Amount Paid (INR),Status,Timestamp\n';
+    let csv = 'Order ID,Customer ID,Item Name,Amount (INR),Status,PNR,Timestamp\n';
     orders.forEach(order => {
-        csv += `${order.purchaseId},${order.userId},"${order.productName.replace(/"/g, '""')}",${order.price},${order.status || 'SUCCESS'},"${order.purchaseTime}"\n`;
+        csv += `${order.purchaseId},${order.userId},"${order.productName.replace(/"/g, '""')}",${order.price},${order.status || 'CONFIRMED'},${order.pnr || '-'},"${order.purchaseTime}"\n`;
     });
 
     const file = new Blob([csv], { type: 'text/csv' });
@@ -726,6 +938,7 @@ async function loadAlgorithmTelemetry(silent = false) {
     }
 
     await loadWaitForGraph(silent);
+    await loadStats(silent);
 }
 
 async function triggerCheckpoint() {
@@ -742,53 +955,150 @@ async function triggerCheckpoint() {
     showToast('WAL Checkpoint saved.', 'success');
 }
 
-// ---------- 8. Wait-For Graph ----------
+// ---------- 8. Wait-For Graph and deadlock simulation ----------
 
-// get the graph from backend and draw it
+// get the graph and the simulation result from the backend and show them
 async function loadWaitForGraph(silent = false) {
     try {
         const response = await fetch('/api/admin/waitforgraph');
-        if (!response.ok) return;
+        if (!response.ok) return null;
         const graph = await response.json();
+        const sim = graph.simulation;
 
         document.getElementById('wfg-total-waits').textContent = graph.totalWaits;
         document.getElementById('wfg-total-deadlocks').textContent = graph.totalDeadlocks;
         document.getElementById('wfg-last-deadlock').textContent = graph.lastDeadlock;
 
-        const badge = document.getElementById('wfg-status-badge');
-        if (graph.deadlock) {
-            badge.textContent = 'DEADLOCK!';
-            badge.className = 'bg-rose-100 text-rose-800 text-xs font-semibold px-2.5 py-1 rounded-full animate-pulse';
-        } else {
-            badge.textContent = 'No Deadlock';
-            badge.className = 'bg-emerald-100 text-emerald-800 text-xs font-semibold px-2.5 py-1 rounded-full';
-        }
-
-        drawWaitForGraph(graph);
+        showDeadlockAlert(sim);
+        showSimulation(graph);
+        return sim;
     } catch (error) {
         if (!silent) console.log('Wait-for graph offline.');
+        return null;
+    }
+}
+
+// red banner on top of the admin page while a deadlock is happening
+function showDeadlockAlert(sim) {
+    const alertBox = document.getElementById('deadlock-alert');
+    if (!alertBox) return;
+
+    if (sim.status === 'DEADLOCK') {
+        const action = sim.victim === 'None'
+            ? `Resolve it from the Engine Core tab (it resolves by itself in ${sim.secondsLeft}s).`
+            : `${sim.victim} is being rolled back.`;
+        document.getElementById('deadlock-alert-text').textContent = `Flash sale of "${sim.productName}": ${sim.cycleText}. ${action}`;
+        alertBox.classList.remove('hidden');
+    } else {
+        alertBox.classList.add('hidden');
+    }
+}
+
+// badge, message, buttons, buyer table and the graph picture
+function showSimulation(graph) {
+    const sim = graph.simulation;
+    const isDeadlock = sim.status === 'DEADLOCK' || graph.deadlock;
+
+    // badge
+    const badge = document.getElementById('wfg-status-badge');
+    if (isDeadlock) {
+        badge.textContent = 'DEADLOCK!';
+        badge.className = 'bg-rose-100 text-rose-800 text-xs font-semibold px-2.5 py-1 rounded-full animate-pulse';
+    } else if (sim.status === 'RUNNING') {
+        badge.textContent = 'Threads Running';
+        badge.className = 'bg-amber-100 text-amber-800 text-xs font-semibold px-2.5 py-1 rounded-full';
+    } else {
+        badge.textContent = 'No Deadlock';
+        badge.className = 'bg-emerald-100 text-emerald-800 text-xs font-semibold px-2.5 py-1 rounded-full';
+    }
+
+    // buttons
+    const runButton = document.getElementById('btn-sim-run');
+    const resolveButton = document.getElementById('btn-sim-resolve');
+    runButton.disabled = sim.status === 'RUNNING' || sim.status === 'DEADLOCK';
+    resolveButton.disabled = !(sim.status === 'DEADLOCK' && sim.victim === 'None');
+
+    // message
+    const message = document.getElementById('wfg-sim-message');
+    const base = 'text-xs rounded-xl px-3 py-2 ';
+    if (sim.status === 'RUNNING') {
+        message.className = base + 'bg-amber-50 text-amber-800';
+        message.textContent = sim.ordered
+            ? `Buyer threads are running for "${sim.productName}" with SORTED lock order (every buyer takes the lower lock first)...`
+            : `Buyer threads are starting for "${sim.productName}"...`;
+    } else if (sim.status === 'DEADLOCK') {
+        message.className = base + 'bg-rose-50 text-rose-800 font-semibold';
+        message.textContent = sim.victim === 'None'
+            ? `⚠️ DEADLOCK on "${sim.productName}": ${sim.cycleText}. Click Resolve Deadlock, or it resolves by itself in ${sim.secondsLeft}s.`
+            : `⚠️ DEADLOCK on "${sim.productName}": ${sim.cycleText}. ${sim.victim} is the victim and is being rolled back...`;
+    } else if (sim.status === 'RESOLVED') {
+        message.className = base + 'bg-emerald-50 text-emerald-800';
+        if (sim.ordered) {
+            message.textContent = '✔ No deadlock. Every buyer took the locks in the same sorted order, so a circle of waiting could not form and nobody was rolled back.';
+        } else if (sim.cycleText === 'None') {
+            message.textContent = 'The threads finished. No deadlock happened this time.';
+        } else {
+            message.textContent = `✔ Deadlock resolved. Cycle was: ${sim.cycleText}. ${sim.victim} was the victim: it was rolled back (locks released) and the others booked. Then ${sim.victim} tried again and booked too.`;
+        }
+    } else {
+        message.className = base + 'bg-stone-100 text-stone-700';
+        message.textContent = "Pick a product and click Run Flash Sale Threads. With 'Any order' the buyers wait for each other in a circle (deadlock). With 'Sorted order' the same buyers never deadlock.";
+    }
+
+    // buyer table
+    const tableBody = document.getElementById('wfg-buyers-table');
+    if (sim.buyers.length === 0) {
+        tableBody.innerHTML = '<tr><td colspan="4" class="py-4 text-center text-stone-400">No buyer threads yet.</td></tr>';
+    } else {
+        tableBody.innerHTML = sim.buyers.map(buyer => {
+            let stateColor = 'text-stone-700';
+            if (buyer.state.startsWith('WAITING')) stateColor = 'text-amber-700 font-semibold';
+            if (buyer.state.startsWith('BOOKED')) stateColor = 'text-emerald-700 font-semibold';
+            if (buyer.state.startsWith('ROLLED BACK')) stateColor = 'text-rose-700 font-semibold';
+            return `
+            <tr class="${buyer.name === sim.victim ? 'bg-rose-50' : ''}">
+                <td class="py-2 px-3 font-mono font-semibold text-stone-900">${escapeHtml(buyer.name)}</td>
+                <td class="py-2 px-3 text-stone-700">${escapeHtml(buyer.holds)}</td>
+                <td class="py-2 px-3 text-stone-700">${escapeHtml(buyer.waitsFor)}</td>
+                <td class="py-2 px-3 ${stateColor}">${escapeHtml(buyer.state)}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    // graph: live one if some thread is waiting, otherwise the picture taken at the deadlock
+    const caption = document.getElementById('wfg-graph-caption');
+    if (graph.edges.length > 0) {
+        caption.classList.add('hidden');
+        drawWaitForGraph(graph.edges, graph.cycle);
+    } else if (sim.status === 'RESOLVED' && sim.snapshotEdges.length > 0) {
+        caption.textContent = 'Graph at the moment of the deadlock (now resolved):';
+        caption.classList.remove('hidden');
+        drawWaitForGraph(sim.snapshotEdges, sim.snapshotCycle);
+    } else {
+        caption.classList.add('hidden');
+        drawWaitForGraph([], []);
     }
 }
 
 // draw threads as circles and "waiting for" as arrows (SVG)
-function drawWaitForGraph(graph) {
+function drawWaitForGraph(edges, cycle) {
     const box = document.getElementById('wfg-graph');
     if (!box) return;
 
-    if (graph.edges.length === 0) {
+    if (edges.length === 0) {
         box.innerHTML = '<span class="text-xs text-stone-400">No thread is waiting right now.</span>';
         return;
     }
 
     // every thread that is in some edge is a node
     const names = [];
-    graph.edges.forEach(edge => {
+    edges.forEach(edge => {
         if (!names.includes(edge.from)) names.push(edge.from);
         if (!names.includes(edge.to)) names.push(edge.to);
     });
 
     // put the nodes on a circle
-    const width = 460, height = 260, centerX = width / 2, centerY = height / 2, radius = 85, nodeSize = 30;
+    const width = 460, height = 270, centerX = width / 2, centerY = height / 2, radius = 90, nodeSize = 32;
     const spots = {};
     names.forEach((name, index) => {
         const angle = (2 * Math.PI * index) / names.length - Math.PI / 2;
@@ -801,13 +1111,13 @@ function drawWaitForGraph(graph) {
             <marker id="arrow-red" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#E11D48"/></marker>
         </defs>`;
 
-    // arrows (red if the thread is in the deadlock cycle)
-    graph.edges.forEach(edge => {
+    // arrows (red if both threads are in the deadlock cycle)
+    edges.forEach(edge => {
         const from = spots[edge.from];
         const to = spots[edge.to];
-        const inCycle = graph.cycle.includes(edge.from) && graph.cycle.includes(edge.to);
+        const inCycle = cycle.includes(edge.from) && cycle.includes(edge.to);
 
-        // start and end of arrow at the edge of the circles
+        // start and end of the arrow at the edge of the circles
         const dx = to.x - from.x, dy = to.y - from.y;
         const length = Math.sqrt(dx * dx + dy * dy) || 1;
         const startX = from.x + (dx / length) * nodeSize, startY = from.y + (dy / length) * nodeSize;
@@ -825,8 +1135,8 @@ function drawWaitForGraph(graph) {
     // circles with thread names
     names.forEach(name => {
         const spot = spots[name];
-        const inCycle = graph.cycle.includes(name);
-        const shortName = name.replace('FlashWorker-', 'Worker-').replace('Demo-Thread-', 'T');
+        const inCycle = cycle.includes(name);
+        const shortName = name.replace('FlashWorker-', 'Worker-').replace('Buyer-', 'B-');
         svg += `<circle cx="${spot.x}" cy="${spot.y}" r="${nodeSize}" fill="${inCycle ? '#FFE4E6' : '#FFEDD5'}" stroke="${inCycle ? '#E11D48' : '#F97316'}" stroke-width="2"/>`;
         svg += `<text x="${spot.x}" y="${spot.y + 4}" font-size="11" text-anchor="middle" font-weight="700" fill="#1C1917">${escapeHtml(shortName)}</text>`;
     });
@@ -834,27 +1144,178 @@ function drawWaitForGraph(graph) {
     box.innerHTML = svg + '</svg>';
 }
 
-// button: start two threads that wait for each other
-async function runDeadlockDemo() {
+// fill the product list of the simulation (only when the list really changed)
+function fillSimulationProducts() {
+    const options = products.map(product => `<option value="${product.id}">${escapeHtml(product.name)}</option>`).join('');
+    ['sim-product', 'burst-product'].forEach(selectId => {
+        const select = document.getElementById(selectId);
+        if (!select || select.dataset.options === options) return;
+        const chosen = select.value;
+        select.innerHTML = options;
+        select.dataset.options = options;
+        if (chosen && products.some(product => String(product.id) === chosen)) select.value = chosen;
+    });
+}
+
+// button: start the buyer threads of a flash sale (any order = deadlock, sorted order = no deadlock)
+async function runFlashSaleSimulation() {
+    const productId = parseInt(document.getElementById('sim-product')?.value, 10);
+    const threads = parseInt(document.getElementById('sim-threads')?.value, 10) || 3;
+    const mode = document.getElementById('sim-mode')?.value || 'deadlock';
+    if (!productId) {
+        showToast('Select a product first.', 'error');
+        return;
+    }
+
     try {
-        const response = await fetch('/api/admin/waitforgraph/demo', { method: 'POST' });
+        const response = await fetch('/api/admin/waitforgraph/simulate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productId, threads, mode })
+        });
         const data = await response.json();
         if (!data.success) {
-            showToast(data.message, 'info');
+            showToast(data.message, 'error');
             return;
         }
-        showToast('Deadlock demo started. Watch the graph!', 'success');
-
-        // check the graph every second while the demo is running
-        for (let second = 1; second <= 14; second++) {
-            setTimeout(() => loadWaitForGraph(true), second * 1000);
-        }
+        showToast(`${threads} buyer threads started. Watch the graph!`, 'success');
+        await loadWaitForGraph(true);
+        startFastPolling();
     } catch (error) {
-        showToast('Server is not running, demo needs the Java backend.', 'error');
+        showToast('Server is not running, the simulation needs the Java backend.', 'error');
     }
 }
 
-// ---------- 9. Small helper functions ----------
+// button: roll back the victim so the other buyers can continue
+async function resolveDeadlock() {
+    try {
+        const response = await fetch('/api/admin/waitforgraph/resolve', { method: 'POST' });
+        const data = await response.json();
+        showToast(data.message, data.success ? 'success' : 'info');
+        startFastPolling();
+    } catch (error) {
+        showToast('Server is not running.', 'error');
+    }
+}
+
+// check the graph every second until the simulation is finished
+function startFastPolling() {
+    if (fastPollTimer) clearInterval(fastPollTimer);
+    fastPollTimer = setInterval(async () => {
+        const sim = await loadWaitForGraph(true);
+        if (sim && (sim.status === 'RESOLVED' || sim.status === 'IDLE')) {
+            clearInterval(fastPollTimer);
+            fastPollTimer = null;
+            // tickets were booked, so refresh the numbers
+            await loadProducts(true);
+            await loadOrders(true);
+            await loadAdminOverview(true);
+        }
+    }, 1000);
+}
+
+// ---------- 9. Performance, burst test and crash recovery ----------
+async function loadStats(silent = false) {
+    try {
+        const response = await fetch('/api/admin/stats');
+        if (!response.ok) return;
+        const s = await response.json();
+
+        document.getElementById('perf-throughput').textContent = `${s.throughputPerSec} req/s`;
+        document.getElementById('perf-avg').textContent = `${s.avgLatencyMs} ms`;
+        document.getElementById('perf-p95').textContent = `${s.p95LatencyMs} ms`;
+        document.getElementById('perf-max').textContent = `${s.maxLatencyMs} ms`;
+        document.getElementById('perf-lockwait').textContent = `${s.avgLockWaitMs} ms (${s.lockWaits} waits)`;
+        document.getElementById('perf-flush').textContent = `${s.walFlushes} / ${s.recordsPerFlush}`;
+        document.getElementById('perf-index').textContent = `${s.indexHeight} / ${s.indexKeys}`;
+        document.getElementById('perf-holds').textContent = `${s.holdsPending} / ${s.holdsExpired}`;
+        document.getElementById('perf-deadlocks').textContent = s.deadlocksFound;
+
+        const r = s.recovery;
+        document.getElementById('crash-last').textContent = r.time === '-'
+            ? 'Last recovery: not run yet.'
+            : `Last recovery: ${r.time}, from ${r.source}, snapshot LSN ${r.snapshotLsn}, ${r.redone} records replayed (REDO), ${r.undone} unpaid holds undone (UNDO), ${r.millis} ms.`;
+    } catch (error) {
+        if (!silent) console.log('Stats offline.');
+    }
+}
+
+// many users click Buy at the same moment
+async function runBurstTest() {
+    const productId = parseInt(document.getElementById('burst-product')?.value, 10);
+    const users = parseInt(document.getElementById('burst-users')?.value, 10) || 1000;
+    if (!productId) {
+        showToast('Select a product first.', 'error');
+        return;
+    }
+
+    const button = document.getElementById('btn-burst');
+    button.disabled = true;
+    button.textContent = `Running ${users} users...`;
+    try {
+        const response = await fetch('/api/admin/burst', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productId, users })
+        });
+        const b = await response.json();
+        if (!b.success) {
+            showToast(b.message, 'error');
+        } else {
+            document.getElementById('burst-booked').textContent = b.booked;
+            document.getElementById('burst-soldout').textContent = b.soldOut;
+            document.getElementById('burst-rejected').textContent = b.rejected;
+            document.getElementById('burst-peak').textContent = b.peakQueue;
+            document.getElementById('burst-time').textContent = `${b.millis} ms`;
+            document.getElementById('burst-speed').textContent = `${Math.round(b.perSecond)} /s`;
+            document.getElementById('burst-latency').textContent = `${b.avgLatencyMs} ms`;
+            document.getElementById('burst-users-done').textContent = b.users;
+            document.getElementById('burst-result').classList.remove('hidden');
+            showToast(`${b.users} users done in ${b.millis} ms: ${b.booked} booked.`, 'success');
+        }
+    } catch (error) {
+        showToast('Server is not running.', 'error');
+    }
+    button.disabled = false;
+    button.textContent = '▶ Run Burst Test';
+    await loadProducts(true);
+    await loadOrders(true);
+    await loadAdminOverview(true);
+    await loadStats(true);
+}
+
+// pretend the server crashed, then rebuild everything from the snapshot and the WAL
+async function simulateCrash() {
+    if (!confirm('The whole memory will be thrown away and rebuilt from the disk (like a power cut). Continue?')) return;
+
+    const button = document.getElementById('btn-crash');
+    button.disabled = true;
+    try {
+        const response = await fetch('/api/admin/crash', { method: 'POST' });
+        const c = await response.json();
+        const verdict = document.getElementById('crash-verdict');
+        if (c.same) {
+            verdict.className = 'rounded-xl px-3 py-2 font-semibold bg-emerald-50 text-emerald-800';
+            verdict.textContent = `✔ IDENTICAL. Recovered from ${c.source}: snapshot LSN ${c.snapshotLsn}, ${c.redone} log records replayed (REDO), ${c.undone} unpaid holds undone (UNDO), ${c.millis} ms.`;
+        } else {
+            verdict.className = 'rounded-xl px-3 py-2 font-semibold bg-rose-50 text-rose-800';
+            verdict.textContent = '✕ The state is different after recovery!';
+        }
+        document.getElementById('crash-before').textContent = c.before;
+        document.getElementById('crash-after').textContent = c.after;
+        document.getElementById('crash-result').classList.remove('hidden');
+        showToast('Crash simulated and recovered.', 'success');
+    } catch (error) {
+        showToast('Server is not running.', 'error');
+    }
+    button.disabled = false;
+    await loadProducts(true);
+    await loadOrders(true);
+    await loadAdminOverview(true);
+    await loadStats(true);
+}
+
+// ---------- 10. Small helper functions ----------
 
 // 1234.5 -> 1,234.50 (Indian format)
 function formatRupees(amount) {

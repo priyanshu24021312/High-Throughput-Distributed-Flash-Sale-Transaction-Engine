@@ -1,66 +1,98 @@
-# ⚡ FlashDeals — Flash Sale & Ticket Booking System
-> **B.Tech 5th Semester Computer Science / IT Project**  
-> **Key Concepts**: Concurrency Control, Mutual Exclusion, WorkerPool Architecture, Write-Ahead Logging (WAL), ACID Transactions.
+# ⚡ FlashDeals — High-Throughput Distributed Flash-Sale Transaction Engine
+> **B.Tech Operating Systems + DBMS Project**
+> **Key Concepts**: Multithreading, Worker Pool (producer-consumer), Strict Two-Phase Locking, Deadlock Detection (Wait-For Graph) and Prevention, B+ Tree Index, Write-Ahead Logging with Group Commit, Checkpoint and Crash Recovery, ACID.
 
 ---
 
 ## 📌 Project Overview
-Flash sales (like booking Tatkal tickets, flight flash drops, or high-demand smartwatches) experience thousands of users attempting to purchase limited stock simultaneously.
+In a flash sale thousands of users try to buy a few items at the same second. If it is done naively, many threads read the same stock together (lost update, overselling), the server creates thousands of threads, and two transactions can wait for each other forever (deadlock).
 
-If implemented naively:
-$$\text{Stock} = \text{Stock} - 1$$
-Multiple threads read the same stock at the same millisecond, leading to **Lost Updates** and **Overselling** (e.g., selling 35 tickets when only 25 exist).
+This project handles that in a controlled way:
 
-This project implements:
-1. **Application-Level Synchronization** (`synchronized`) & **Database Row Locks** (`SELECT ... FOR UPDATE`).
-2. **WorkerPool Algorithm**: Uses a bounded `ArrayBlockingQueue` with dedicated worker threads to handle spikes and prevent thread starvation.
-3. **Write-Ahead Logging (WAL) Algorithm**: Logs every transaction to `data/wal.log` with synchronous disk flushing (`fsync`) before memory state changes, guaranteeing **zero data loss** on crashes.
-4. **Wait-For Graph (Deadlock Detection)**: Tracks which thread is waiting for a lock held by another thread. Threads are nodes, and an arrow `A -> B` means A waits for B. A cycle in the graph means a deadlock (`WaitForGraph.java`).
-
----
-
-## 🎨 User Interface (Humanized & Clean)
-- **Design Theme**: Clean Off-White (`#FAF8F5`) and warm Orange (`#FF6B00`).
-- **Currency**: Native Indian Rupees (**₹**) (e.g. `₹2,999.00`, `₹1,750.00`).
-- **Product Categories**:
-  - ✈️ **Travel Tickets** (Goa Flights, Vande Bharat Express, Music Festival VIP passes)
-  - ⌚ **Wearables** (Titan Smartwatch, Noise Smartwatch, Ultrahuman Titanium Smart Ring)
-  - ⚡ **Electronics** (PlayStation 5 Pro)
-- **Role Separation**:
-  - **Customer Storefront**: View live deals, filter by category, instant 1-click booking, digital receipt modal.
-  - **Admin Dashboard (Protected)**: Requires PIN `admin123`. Allows adding new items, managing quotas, resetting stock, downloading customer orders CSV, and inspecting real-time WorkerPool, WAL logs and the Wait-For Graph.
+1. **Worker Pool + Bounded Buffer** (`WorkerPool.java`, `BoundedBuffer.java`): requests go into a queue of 2000 places made with semaphores. A fixed number of worker threads process them. When the queue is full a new request is rejected at once (back-pressure).
+2. **Strict Two-Phase Locking** (`LockManager.java`): every product row has a Shared (S) / Exclusive (X) lock. Locks are asked in the growing phase and all released together at the end.
+3. **Deadlock Detection and Recovery** (`WaitForGraph.java`): the lock manager reports every wait, a DFS finds cycles, the youngest transaction is the victim, it is rolled back and tried again later.
+4. **Deadlock Prevention**: multi-item bookings (cart) take their locks in sorted product id order, so a circle of waiting can never form.
+5. **B+ Tree index** (`BPlusTree.java`): products are found by id in a B+ Tree (leaf nodes are linked, so all products can be read in order). Readers-writers lock on the tree.
+6. **Write-Ahead Log with Group Commit** (`WAL.java`): every change is logged before the data changes and before the customer gets an answer. Many transactions share one `fsync`.
+7. **Checkpoint + Crash Recovery** (`Database.java`): a snapshot is saved at a checkpoint. After a crash the engine loads the snapshot, replays the log (REDO) and gives back the seats of unpaid holds (UNDO).
+8. **Seat hold, payment, PNR**: Buy holds the seat for 5 minutes, Pay confirms the order with a PNR, Cancel or timeout gives the seat back (`HoldReaper` thread).
+9. **Optional MySQL**: confirmed orders are also saved in MySQL with an ACID transaction and `SELECT ... FOR UPDATE`.
 
 ---
 
-## 🚀 How to Run the Project
+## 🧠 OS and DBMS topics used (where to find them)
+| Subject | Topic | Where |
+|---|---|---|
+| OS | Multithreading, thread pool | `WorkerPool.java` |
+| OS | Producer-consumer problem with semaphores | `BoundedBuffer.java` |
+| OS | Mutual exclusion, monitors (`wait` / `notifyAll`) | `LockManager.java` |
+| OS | Readers-writers problem | `BPlusTree.java` (ReadWriteLock), S/X locks in `LockManager.java` |
+| OS | Deadlock: 4 conditions, Wait-For Graph, detection, victim, recovery | `WaitForGraph.java`, `DeadlockSimulation.java` |
+| OS | Deadlock prevention (break circular wait by resource ordering) | sorted lock order in `Database.hold`, "Sorted order" mode of the simulation |
+| OS | Daemon / timer thread | `HoldReaper` thread in `Database.java` |
+| OS | File I/O, `fsync`, atomic file replace | `WAL.java`, snapshot in `Database.java` |
+| DBMS | ACID (Atomicity: cart is all or nothing, Isolation: 2PL, Durability: WAL) | `Database.java` |
+| DBMS | Strict 2PL, lock modes S/X, lock upgrade | `LockManager.java` |
+| DBMS | Indexing with B+ Tree (insert with node split, search, range scan) | `BPlusTree.java` |
+| DBMS | Write-Ahead Logging, LSN, group commit | `WAL.java` |
+| DBMS | Checkpoint, REDO / UNDO recovery | `Database.checkpoint`, `Database.recover` |
+| DBMS | Row level locking with `SELECT ... FOR UPDATE` | `Database.saveConfirmedOrder` (MySQL) |
 
-### Option 1: Double-Click Launcher (Windows)
-Double-click `start_server.bat` in the project root:
-```powershell
-.\start_server.bat
+---
+
+## 🎨 User Interface
+- **Customer Storefront**: live deals, filter by category, **Book Ticket** holds the seat, **payment screen with 5 minute countdown**, receipt with **PNR**. Tick several products and use **Book Selected** to book them together (all or nothing).
+- **Admin Dashboard** (PIN `admin123`):
+  - Products: add, **edit**, delete, restock.
+  - Orders ledger: status (CONFIRMED, PENDING, PAYMENT_FAILED, EXPIRED), PNR, CSV download.
+  - **Engine Core** tab: Wait-For Graph and **Run Flash Sale Threads** (deadlock or sorted-order mode), **Performance** numbers, **High Traffic Burst Test**, **Crash Recovery** button, WorkerPool and WAL consoles.
+
+---
+
+## 🚀 How to Run
+Put `mysql-connector-j-26.7.0.jar` in this folder if you want MySQL (it is optional, without MySQL the in-memory engine is used).
+
+**Windows:** double-click `start_server.bat`.
+
+**Terminal:**
 ```
-This automatically compiles the Java files, frees the port, and opens **`http://localhost:8080`** in your browser.
-
-### Option 2: Run via Terminal
-```powershell
-cd FlashSaleProject
 javac -cp ".;mysql-connector-j-26.7.0.jar" *.java
 java -cp ".;mysql-connector-j-26.7.0.jar" WebServer 8080
 ```
+(use `:` instead of `;` on Linux / Mac, or run `./start_server.sh`)
 
-- **Customer View**: [http://localhost:8080](http://localhost:8080)
-- **Admin Panel**: Click **`🔒 Admin Login`** in top-right (Default PIN: `admin123`).
+Open `http://localhost:8080`. For MySQL run `database.sql` once (the engine also creates the tables if they are missing).
+
+Delete the `data/` folder if you want a fresh start (it keeps the WAL and the snapshot).
 
 ---
 
-## 🎓 Viva / Presentation Guide for Students
+## 🧪 Things to show in the demo
+1. **Overselling test**: Engine Core -> *High Traffic Burst Test* with 1000 users on a product with 30 units: exactly 30 booked, nobody over-sold, speed and peak queue are shown. With 5000 users the queue (2000) fills and extra requests are rejected.
+2. **Deadlock**: *Run Flash Sale Threads* with "Any order": red cycle, alert, *Resolve Deadlock*, the victim is rolled back and tries again. Then run "Sorted order": the same buyers never deadlock.
+3. **Hold / Pay / Expiry**: book a ticket, watch the timer; start the server with `java -Dhold.seconds=20 ...` to see an expiry quickly.
+4. **Crash recovery**: do some bookings, press *Trigger Checkpoint*, do more bookings, press *Simulate Crash & Recover*: before and after are identical. You can also stop the server with `kill -9` / Task Manager and start it again.
+5. **Group commit**: Performance card shows records per fsync (many records are written with one fsync).
 
-When your professor asks about the project:
-1. **"How do you prevent two users from buying the last ticket simultaneously?"**
-   - *Answer:* "We use a multi-tiered lock. At the application layer, the reservation method is synchronized. At the database layer, we execute `SELECT available_quantity FROM product WHERE product_id = ? FOR UPDATE`, which places an exclusive row lock on the record until the transaction commits."
-2. **"What is the WorkerPool algorithm and why did you use it?"**
-   - *Answer:* "Creating an unbounded thread for every HTTP request crashes the JVM during flash traffic spikes (`OutOfMemoryError`). Our `WorkerPool` uses a fixed set of dedicated worker threads pulling from a bounded queue (`ArrayBlockingQueue`), smoothing traffic spikes and applying backpressure safely."
-3. **"What is Write-Ahead Logging (WAL)?"**
-   - *Answer:* "WAL enforces the Durability property of ACID. Before we decrement in-memory stock, the worker thread appends an append-only log record (`TXN_BEGIN`, `STOCK_RESERVE`, `ORDER_COMMIT`) to `data/wal.log` with `sync()`. If the server crashes or loses power, our startup recovery function scans the log and replays all committed transactions."
-4. **"What is a Wait-For Graph and how does it find a deadlock?"**
-   - *Answer:* "Every thread is a node. When thread A asks for a lock that thread B is holding, we add an edge A -> B (`WaitForGraph.startWaiting`). When A gets the lock the edge is removed. After every new wait we run a depth-first search on the graph, and if we come back to a node already on the current path, that is a cycle, so those threads are deadlocked. In the Admin Panel -> Algorithms tab, click **Run Deadlock Demo**: two threads take LOCK-A and LOCK-B in opposite order, the graph shows the red cycle, and then one thread gives up (the victim) so the deadlock is broken."
+---
+
+## 🎓 Viva / Presentation Guide
+1. **How do you stop two users from buying the last ticket together?**
+   Every product row has an X lock in the Lock Manager (strict 2PL). The buyer checks the stock, writes the log and reduces the stock while holding the lock. Others wait. In MySQL the same is done with `SELECT ... FOR UPDATE`.
+2. **Why a worker pool and a bounded queue?**
+   A new thread for every request crashes the server in a traffic spike. We use a fixed number of workers (consumers) and a queue made with 3 semaphores (empty, full, mutex). If the queue is full we reject at once, so the server is never overloaded.
+3. **What is strict 2PL?**
+   Growing phase: the transaction only takes locks. Shrinking phase: all locks are released together when the transaction ends (commit or abort). That gives serializable schedules and no dirty reads.
+4. **What is a Wait-For Graph?**
+   Every transaction is a node, an edge A -> B means A waits for a lock held by B. After each new wait we run DFS, a cycle means deadlock. The youngest transaction in the cycle is aborted (its locks are released), the others continue, and the victim is retried.
+5. **How do you prevent deadlock?**
+   By breaking circular wait: a cart takes its product locks in sorted product id order. Two carts [2,3] and [3,2] both ask for 2 first, so they can not wait for each other in a circle. The admin simulation shows both modes.
+6. **What is WAL and group commit?**
+   Log first, data second. A record is on the disk before the customer is told "confirmed". Many threads put records in a buffer and one thread writes them with one `fsync`, so the slow disk write is shared. The log order is the same as the lock order.
+7. **How does crash recovery work?**
+   At a checkpoint the engine saves a snapshot and its LSN. After a crash: load the snapshot, REDO the log records after that LSN in order, then UNDO the holds that were never paid (their seats go back). The Crash Recovery button shows the state before and after, they are identical.
+8. **Why a B+ Tree?**
+   All values are in the leaves, leaves are linked, so a search is O(log n) and a range scan (list all products in order) just walks the leaves. A read-write lock lets many readers search together.
+9. **What is the readers-writers problem here?**
+   Reading the stock for a report takes an S lock (many readers together), changing it takes an X lock (alone). The same idea is used for the B+ Tree.

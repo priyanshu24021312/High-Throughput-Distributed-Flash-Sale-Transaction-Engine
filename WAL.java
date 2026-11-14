@@ -1,4 +1,6 @@
 import java.io.*;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.text.SimpleDateFormat;
@@ -7,8 +9,9 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicLong;
 
 // Write-Ahead Log (WAL)
-// Every change is first written to a log file on disk, then the data is changed.
-// If the server crashes we can read the log again on startup.
+// Every change is first written to a log file on disk, an order is confirmed only after its record is on the disk.
+// Group commit: many threads add records to a buffer and one thread writes them all with a single fsync,
+// so the slow disk flush is shared between many transactions.
 public class WAL {
 
     private static final String LOG_DIR = "data";
@@ -16,9 +19,12 @@ public class WAL {
     private static final String CHECKPOINT_FILE = "data/checkpoint.meta";
 
     private static final AtomicLong lsnCounter = new AtomicLong(1000);
-    private static final Object writeLock = new Object();
+    private static final Object bufferLock = new Object();   // protects pending list and LSN numbers
+    private static final Object flushLock = new Object();    // only one thread writes to the disk at a time
+    private static final List<LogRecord> pending = new ArrayList<>();   // added, but not on the disk yet
     private static FileOutputStream fileStream = null;
     private static OutputStreamWriter writer = null;
+    private static volatile long flushedLsn = 0;
 
     // last logs kept in memory for the admin page
     private static final ConcurrentLinkedDeque<LogRecord> recentLogs = new ConcurrentLinkedDeque<>();
@@ -26,12 +32,14 @@ public class WAL {
 
     private static volatile long lastCheckpointLsn = 0;
     private static volatile long totalCheckpoints = 0;
+    private static volatile long totalFlushes = 0;
+    private static volatile long flushedRecords = 0;
 
     public static class LogRecord {
         public long lsn;
         public String timestamp;
         public String txnId;
-        public String opType;   // TXN_BEGIN, STOCK_RESERVE, ORDER_COMMIT, TXN_ABORT, CHECKPOINT
+        public String opType;   // TXN_BEGIN, STOCK_RESERVE, ORDER_COMMIT, TXN_ABORT, CHECKPOINT, PRODUCT_CREATE ...
         public int userId;
         public int productId;
         public String productName;
@@ -39,9 +47,10 @@ public class WAL {
         public int newQty;
         public double price;
         public String status;
+        public String details;   // extra data as key=value pairs, needed to redo the change after a crash
 
-        public LogRecord(long lsn, String timestamp, String txnId, String opType, int userId,
-                         int productId, String productName, int prevQty, int newQty, double price, String status) {
+        public LogRecord(long lsn, String timestamp, String txnId, String opType, int userId, int productId,
+                         String productName, int prevQty, int newQty, double price, String status, String details) {
             this.lsn = lsn;
             this.timestamp = timestamp;
             this.txnId = txnId;
@@ -53,15 +62,17 @@ public class WAL {
             this.newQty = newQty;
             this.price = price;
             this.status = status;
+            this.details = details != null ? details : "";
         }
 
-        // LSN|TIME|TXN_ID|OP|USER|PRODUCT|NAME|PREV_QTY|NEW_QTY|PRICE|STATUS
+        // LSN|TIME|TXN_ID|OP|USER|PRODUCT|NAME|PREV_QTY|NEW_QTY|PRICE|STATUS|DETAILS
         public String toLogString() {
-            return String.format(Locale.US, "%d|%s|%s|%s|%d|%d|%s|%d|%d|%.2f|%s\n",
+            return String.format(Locale.US, "%d|%s|%s|%s|%d|%d|%s|%d|%d|%.2f|%s|%s\n",
                     lsn, timestamp, txnId, opType, userId, productId,
-                    productName.replace("|", "/"), prevQty, newQty, price, status);
+                    productName.replace("|", "/").replace("\n", " "), prevQty, newQty, price, status, details);
         }
 
+        // old log lines have 11 parts (no details), they are still readable
         public static LogRecord parse(String line) {
             try {
                 String[] parts = line.trim().split("\\|", -1);
@@ -69,7 +80,7 @@ public class WAL {
                 return new LogRecord(Long.parseLong(parts[0]), parts[1], parts[2], parts[3],
                         Integer.parseInt(parts[4]), Integer.parseInt(parts[5]), parts[6],
                         Integer.parseInt(parts[7]), Integer.parseInt(parts[8]),
-                        Double.parseDouble(parts[9]), parts[10]);
+                        Double.parseDouble(parts[9]), parts[10], parts.length > 11 ? parts[11] : "");
             } catch (Exception e) {
                 return null;
             }
@@ -81,17 +92,26 @@ public class WAL {
     }
 
     public static synchronized void init() {
+        if (writer != null) return;   // already started
         try {
             Path dir = Paths.get(LOG_DIR);
             if (!Files.exists(dir)) Files.createDirectories(dir);
-
             File file = new File(LOG_FILE);
-            boolean alreadyExists = file.exists();
+            boolean alreadyExists = file.exists() && file.length() > 0;
             fileStream = new FileOutputStream(file, true);
             writer = new OutputStreamWriter(fileStream, StandardCharsets.UTF_8);
 
             if (alreadyExists) {
-                recover();
+                List<LogRecord> all = readAll();
+                long maxLsn = lsnCounter.get();
+                for (LogRecord record : all) {
+                    if (record.lsn > maxLsn) maxLsn = record.lsn;
+                }
+                lsnCounter.set(maxLsn);
+                flushedLsn = maxLsn;
+                int from = Math.max(0, all.size() - MAX_RECENT_LOGS);
+                for (int i = from; i < all.size(); i++) addToRecent(all.get(i));
+                System.out.println("[WAL] Found old log with " + all.size() + " records, next LSN is " + (maxLsn + 1));
             } else {
                 logCheckpoint("INITIAL_WAL_CREATION");
             }
@@ -101,27 +121,54 @@ public class WAL {
     }
 
     // ---------- writing to the log ----------
-    public static LogRecord append(String txnId, String opType, int userId, int productId,
-                                   String productName, int prevQty, int newQty, double price, String status) {
-        long lsn = lsnCounter.incrementAndGet();
+    // adds the record to the buffer, it is NOT on the disk yet (call flush for that)
+    public static LogRecord append(String txnId, String opType, int userId, int productId, String productName,
+                                   int prevQty, int newQty, double price, String status, String details) {
         String time = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(new Date());
-        LogRecord record = new LogRecord(lsn, time, txnId, opType, userId, productId,
-                productName, prevQty, newQty, price, status);
+        LogRecord record;
+        synchronized (bufferLock) {
+            // the LSN is given inside the lock, so the order in the buffer is the same as the LSN order
+            record = new LogRecord(lsnCounter.incrementAndGet(), time, txnId, opType, userId, productId,
+                    productName, prevQty, newQty, price, status, details);
+            pending.add(record);
+        }
+        addToRecent(record);
+        return record;
+    }
 
-        synchronized (writeLock) {
+    // adds the record and waits until it is on the disk
+    public static LogRecord appendNow(String txnId, String opType, int userId, int productId, String productName,
+                                      int prevQty, int newQty, double price, String status, String details) {
+        LogRecord record = append(txnId, opType, userId, productId, productName, prevQty, newQty, price, status, details);
+        flush(record.lsn);
+        return record;
+    }
+
+    // group commit: make sure that the record with this LSN is on the disk
+    public static void flush(long lsn) {
+        synchronized (flushLock) {
+            if (flushedLsn >= lsn) return;   // another thread already wrote it together with its own batch
+            List<LogRecord> batch;
+            synchronized (bufferLock) {
+                batch = new ArrayList<>(pending);
+                pending.clear();
+            }
+            if (batch.isEmpty()) return;
             try {
+                StringBuilder text = new StringBuilder();
+                for (LogRecord record : batch) text.append(record.toLogString());
                 if (writer != null) {
-                    writer.write(record.toLogString());
+                    writer.write(text.toString());
                     writer.flush();
                     fileStream.getFD().sync();   // force it onto the disk
                 }
             } catch (IOException e) {
                 System.err.println("[WAL Error] Failed to write log: " + e.getMessage());
             }
+            flushedLsn = batch.get(batch.size() - 1).lsn;
+            totalFlushes++;
+            flushedRecords += batch.size();
         }
-
-        addToRecent(record);
-        return record;
     }
 
     private static void addToRecent(LogRecord record) {
@@ -132,78 +179,60 @@ public class WAL {
     }
 
     public static LogRecord logBegin(String txnId, int userId, int productId) {
-        return append(txnId, "TXN_BEGIN", userId, productId, "", 0, 0, 0, "QUEUED");
-    }
-
-    public static LogRecord logReserve(String txnId, int userId, int productId, String productName,
-                                       int prevQty, int newQty, double price) {
-        return append(txnId, "STOCK_RESERVE", userId, productId, productName, prevQty, newQty, price, "RESERVED");
-    }
-
-    public static LogRecord logCommit(String txnId, int userId, int productId, String productName,
-                                      int remainingQty, double price) {
-        return append(txnId, "ORDER_COMMIT", userId, productId, productName, remainingQty + 1, remainingQty, price, "COMMITTED");
+        return append(txnId, "TXN_BEGIN", userId, productId, "", 0, 0, 0, "QUEUED", "");
     }
 
     public static LogRecord logAbort(String txnId, int userId, int productId, String reason) {
-        return append(txnId, "TXN_ABORT", userId, productId, "", 0, 0, 0, reason);
+        return append(txnId, "TXN_ABORT", userId, productId, "", 0, 0, 0, reason, "");
     }
 
     public static synchronized LogRecord logCheckpoint(String note) {
         totalCheckpoints++;
-        long lsn = lsnCounter.get();
-        lastCheckpointLsn = lsn;
-        LogRecord record = append("CHK-" + totalCheckpoints, "CHECKPOINT", 0, 0, note, 0, 0, 0, "SUCCESS");
-
+        LogRecord record = appendNow("CHK-" + totalCheckpoints, "CHECKPOINT", 0, 0, note, 0, 0, 0, "SUCCESS", "");
+        lastCheckpointLsn = record.lsn;
         try {
-            Files.writeString(Paths.get(CHECKPOINT_FILE), "CHECKPOINT_LSN=" + lsn + "\nTIMESTAMP=" + new Date() + "\n",
+            Files.writeString(Paths.get(CHECKPOINT_FILE), "CHECKPOINT_LSN=" + record.lsn + "\nTIMESTAMP=" + new Date() + "\n",
                     StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
         } catch (IOException ignored) {}
-
         return record;
     }
 
-    // ---------- crash recovery ----------
-    public static synchronized int recover() {
+    // ---------- reading the log (used by crash recovery) ----------
+    public static List<LogRecord> readAll() {
+        List<LogRecord> list = new ArrayList<>();
         File file = new File(LOG_FILE);
-        if (!file.exists() || file.length() == 0) return 0;
-
-        System.out.println("[WAL Recovery] Scanning Write-Ahead Log for uncommitted / committed states...");
-        int replayedCount = 0;
-        long maxLsn = lsnCounter.get();
-
-        // group all records by transaction id
-        Map<String, List<LogRecord>> transactions = new HashMap<>();
-
+        if (!file.exists()) return list;
         try (BufferedReader reader = new BufferedReader(new FileReader(file, StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 LogRecord record = LogRecord.parse(line);
-                if (record == null) continue;
-
-                if (record.lsn > maxLsn) maxLsn = record.lsn;
-                transactions.computeIfAbsent(record.txnId, k -> new ArrayList<>()).add(record);
-                addToRecent(record);
+                if (record != null) list.add(record);
             }
         } catch (IOException e) {
-            System.err.println("[WAL Recovery Error] Error reading WAL file: " + e.getMessage());
+            System.err.println("[WAL Error] Error reading WAL file: " + e.getMessage());
         }
+        list.sort(Comparator.comparingLong(r -> r.lsn));
+        return list;
+    }
 
-        lsnCounter.set(maxLsn + 1);
-
-        // only the transactions that have ORDER_COMMIT are replayed
-        for (List<LogRecord> records : transactions.values()) {
-            boolean committed = records.stream().anyMatch(r -> "ORDER_COMMIT".equals(r.opType));
-            if (!committed) continue;
-            for (LogRecord record : records) {
-                if ("STOCK_RESERVE".equals(record.opType) || "ORDER_COMMIT".equals(record.opType)) {
-                    replayedCount++;
-                }
-            }
+    // "a=1;b=text" <-> map. The values are URL encoded so they never contain | ; = or new lines
+    public static String pack(Object... keyAndValue) {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i + 1 < keyAndValue.length; i += 2) {
+            if (text.length() > 0) text.append(';');
+            text.append(keyAndValue[i]).append('=').append(URLEncoder.encode(String.valueOf(keyAndValue[i + 1]), StandardCharsets.UTF_8));
         }
+        return text.toString();
+    }
 
-        System.out.println("[WAL Recovery] Completed! Active LSN: " + lsnCounter.get() + ", Transactions replayed: " + replayedCount);
-        return replayedCount;
+    public static Map<String, String> unpack(String details) {
+        Map<String, String> map = new HashMap<>();
+        if (details == null || details.isEmpty()) return map;
+        for (String part : details.split(";")) {
+            int eq = part.indexOf('=');
+            if (eq > 0) map.put(part.substring(0, eq), URLDecoder.decode(part.substring(eq + 1), StandardCharsets.UTF_8));
+        }
+        return map;
     }
 
     // ---------- getters for admin page ----------
@@ -221,4 +250,6 @@ public class WAL {
     public static long getCurrentLsn() { return lsnCounter.get(); }
     public static long getLastCheckpointLsn() { return lastCheckpointLsn; }
     public static long getTotalCheckpoints() { return totalCheckpoints; }
+    public static long getTotalFlushes() { return totalFlushes; }
+    public static long getFlushedRecords() { return flushedRecords; }
 }
